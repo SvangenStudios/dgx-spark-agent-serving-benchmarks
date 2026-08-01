@@ -6,9 +6,10 @@ and **Laguna S 2.1** (vLLM 0.25.1, single node) behave on NVIDIA DGX Spark (GB10
 capacity, scheduling fairness under mixed load, prompt cache locality, and startup/recovery
 behavior.
 
-> **Status: pre-release.** A real agent workload capture (Hermes) is pending before the
-> first announced version. Numbers below are from controlled synthetic runs, measured
-> 2026-08-01/02, all on the same hardware and stack.
+> **Status: pre-release.** Measured 2026-08-01/02, all on the same hardware and stack.
+> Includes one real agent workload (Hermes v0.19.0, 10-turn bug-fix task through the
+> capture proxy): **97–99 % prefix-cache reuse per turn** — the framework builds prompts
+> append-only, so each agent step re-prefills only ~200–450 tokens.
 
 ---
 
@@ -123,8 +124,7 @@ the experiment that would settle each open point.
 
 ## Pending before v1.0
 
-- [ ] Real agent workload capture (Hermes) through the proxy — the headline claim needs at
-      least one real agent result behind it
+- [x] Real agent workload capture (Hermes) — done, see results §10
 - [ ] English translation of all script output strings
 - [ ] 262K + `drop_caches` causality test for #48140
 - [ ] Minimal reproduction for the scheduling deviation → issue in the DSpark recipe repo

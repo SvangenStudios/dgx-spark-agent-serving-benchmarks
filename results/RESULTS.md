@@ -323,3 +323,31 @@ Viktladdaren är enkeltrådad (101 % CPU) — golvet för varje omstart, oavsett
    fas mot stabil fas.
 9. **`pkill`/`pgrep -f` self-matchar även över SSH** — mönstret finns i fjärrskalets
    kommandorad. Använd `[b]racket`-mönster eller PID-filer. (Bet oss tre gånger.)
+
+---
+
+## 10. Real agent workload (Hermes v0.19.0, 2026-08-02 01:10)
+
+A real agent task was run through the capture proxy against the 2048 agent profile:
+find and fix a planted bug in a small Python project, run the test suite, handle the
+failing test, summarize. The agent solved it correctly (bug found: `len(stock)` →
+`sum(stock.values())`; 4/4 tests passing) in 10 model calls with 20 tool definitions
+and a ~15–18K-token growing prompt.
+
+**Prompt locality across agent turns (server tokenizer, 256-token blocks):**
+
+| Transition | Prompt size | First divergence | Reusable prefix | Re-prefill |
+|---|---|---|---|---|
+| turn 1→2 | 15,169 tok | token 15,168 (last) | **97.1 %** | 453 tok |
+| turn 5→6 | 16,549 tok | token 16,548 (last) | **98.7 %** | 213 tok |
+| turn 9→10 | 17,655 tok | token 17,654 (last) | **97.5 %** | 439 tok |
+
+**The agent framework is already cache-optimal.** Prompts are built append-only: no
+mutating timestamps, no reordered tool lists, no rewritten history. Divergence sits at
+the very last token of the previous prompt, every turn. Each agent step re-prefills only
+the new tail (~200–450 tokens ≈ 0.2 s) instead of the full context (~10 s).
+
+This is the null-result counterpart to the synthetic dirty-top experiments: the tool's
+value here was *verifying* cache health, not finding a problem. Frameworks that inject
+volatile content early would show divergence at token ~13 instead — an 
+order-of-magnitude-larger per-turn cost that this analysis makes visible in seconds.
