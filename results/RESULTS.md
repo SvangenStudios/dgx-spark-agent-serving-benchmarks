@@ -351,3 +351,21 @@ This is the null-result counterpart to the synthetic dirty-top experiments: the 
 value here was *verifying* cache health, not finding a problem. Frameworks that inject
 volatile content early would show divergence at token ~13 instead — an 
 order-of-magnitude-larger per-turn cost that this analysis makes visible in seconds.
+
+### Code-content decode concurrency and end-to-end agent timing (01:30)
+
+Decode concurrency re-measured with **code content** (the Swedish-prose run above was the
+worst case; agent workloads are code-dominated):
+
+| N | aggregate | per stream | draft acceptance |
+|---|---|---|---|
+| 1 | 48.0 tok/s | 48.0 | 62.3 % |
+| 2 | 72.9 | 38.1 | 72.6 % |
+| 4 | **126.3 tok/s** | 34.0 | **71.3 %** |
+
+Acceptance holds ~71 % under concurrency — speculation does not degrade with parallel
+streams. At N=4, each stream still receives roughly what the previous production model
+delivered to a single user (35.1 tok/s).
+
+A second end-to-end agent task (different bug class) completed correctly in **316 s**,
+10-ish model calls, 4/4 tests passing.
