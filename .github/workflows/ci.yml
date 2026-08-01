@@ -1,0 +1,17 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Syntax check all scripts
+        run: python3 -m py_compile scripts/*.py
+      - name: Secrets and address scan
+        run: |
+          # Fail if anything resembling private addresses, tokens, usernames
+          # or e-mail addresses reappears in a future commit.
+          ! grep -rnE \
+            '100\.(6[4-9]|[7-9][0-9]|1[0-1][0-9]|12[0-7])\.[0-9]+\.[0-9]+|192\.168\.[0-9]+\.[0-9]+|10\.[0-9]+\.[0-9]+\.[0-9]+|hf_[A-Za-z0-9]{16,}|sk-[A-Za-z0-9]{20,}|ghp_[A-Za-z0-9]{20,}|BEGIN (RSA|OPENSSH|EC) PRIVATE|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.(se|com|org|net)' \
+            --include='*.py' --include='*.md' --include='*.env' --include='*.txt' --include='*.yml' . \
+            || { echo '::error::Potential secret, private address or e-mail found'; exit 1; }
