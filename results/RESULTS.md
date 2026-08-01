@@ -1,338 +1,295 @@
-# DeepSeek-V4-Flash-0731 på 2× DGX Spark — mätresultat 2026-08-01
+# Results — measured 2026-08-01/02
 
-Alla siffror är egenmätta samma kväll på samma rigg. Där en slutsats senare visade sig
-fel står den kvar tillsammans med korrigeringen — se §7.
+All figures were measured within the same night on the same rig. Where a conclusion later
+turned out to be wrong, it is kept together with its correction — see §7.
 
-## Uppställning
+## Setup
 
 | | |
 |---|---|
-| Hårdvara | 2× NVIDIA DGX Spark (GB10, sm_121), 128 GB unified LPDDR5X per nod |
-| Sammankoppling | RoCE, direktkopplad, asymmetrisk portmappning (nod 1 port 1 ↔ nod 2 port 0) |
-| Modell | `deepseek-ai/DeepSeek-V4-Flash-0731`, rev `7872f01b1d1fe23eabc4c98b48bffcef5a386062`, 156 GB |
-| Recept | `tonyd2wild/DeepSeek-v4-Flash-0731-DSpark-1M-NVFP4-KV-2x-DGX-Spark` @ `d728faee` |
-| Basimage | `ghcr.io/bjk110/vllm-spark@sha256:d8492e7677cf1b9aaa3344e0e6865efc468454013eee5ebabac85be90af027be` |
+| Hardware | 2× NVIDIA DGX Spark (GB10, sm_121), 128 GB unified LPDDR5X per node |
+| Interconnect | RoCE, direct-attached, asymmetric port mapping (node 1 port 1 ↔ node 2 port 0) |
+| Model | `deepseek-ai/DeepSeek-V4-Flash-0731` @ `7872f01b1d1fe23eabc4c98b48bffcef5a386062`, 156 GB |
+| Recipe | `tonyd2wild/DeepSeek-v4-Flash-0731-DSpark-1M-NVFP4-KV-2x-DGX-Spark` @ `d728faee` |
 | Runtime | `vllm-dspark-runtime:dspark-nvfp4-stage-c`, vLLM `0.21.1rc1.dev339+g1967a5627bc3` |
-| Topologi | TP=2, PP=1, `nvfp4_ds_mla` KV, block-size 256 |
-| Spekulation | DSpark, k=5 statisk |
-| GMU | 0,78 |
+| Topology | TP=2, PP=1, `nvfp4_ds_mla` KV, block-size 256 |
+| Speculation | DSpark, k=5 static |
+| GPU memory utilization | 0.78 |
 
-**Bygget tar ~20 sekunder, inte 30–60 minuter** — overlayet är ren Python på en färdig
-basimage, ingen NVCC-kompilering. Basimagen visade sig dessutom vara byte-identisk med
-`aidendle94/sparkrun-vllm-ds4-gb10:production-ready`.
+Notes that save others time:
 
-**Patch 4** (shared-expert gate_up_proj) är **redan inbakad** i receptets overlay sedan
-2026-07-31. Applicera den inte — verifiera hashen:
-`4c11f54f7e74d658d40d4ec091f2b9911efd41ebde9f894f87102bcd3d3caba3`.
+- **The image build takes ~20 seconds, not 30–60 minutes** — the recipe overlay is pure
+  Python on a prebuilt base image; no NVCC compilation happens.
+- **"Patch 4"** (shared-expert gate_up_proj) **is already baked into the recipe overlay**
+  since 2026-07-31. Do not apply it again — verify the file hash instead. Without it,
+  draft acceptance collapses to ~26 % and decode roughly halves; dropped tensors are
+  logged at DEBUG level only.
 
----
+## 1. Production status
 
-## 1. Produktionsstatus
+- `Using 'B12X' Mxfp4 MoE backend` confirmed active (without it: ~60 → ~29 tok/s per the recipe)
+- Correctness: **40/40** — code 10/10, Swedish 10/10 with correct diacritics,
+  tool calls **10/10** well-formed and parseable, ~12K needle search 10/10
 
-- `Using 'B12X' Mxfp4 MoE backend` bekräftad aktiv *(utan den: ~60 → ~29 tok/s enligt receptet)*
-- 1M-kontext verifierad både tekniskt och kvalitativt
-- **Korrekthet: 40/40** — kod 10/10, svenska 10/10 med korrekt diakritik,
-  verktygsanrop **10/10** korrekt formade och parsbara, nålsökning ~12K 10/10
+Decode, warm, `stream:false`, median of three:
 
-**Decode, varmt, `stream:false`, median av tre:**
-
-| Innehåll | Decode | Draft-acceptans |
+| Content | Decode | Draft acceptance |
 |---|---|---|
-| Kod / strukturerat | **62,5–68,1 tok/s** | **71,0 %** |
-| Prosa, engelska | 35,3 tok/s | 28,4 % |
-| Prosa, svenska | 30,3 tok/s | 19,5 % |
-| Blandat (3 kod + 2 prosa) | 50,1 tok/s | — |
+| Code / structured | **62.5–68.1 tok/s** | **71.0 %** |
+| English prose | 35.3 tok/s | 28.4 % |
+| Swedish prose | 30.3 tok/s | 19.5 % |
+| Mixed (3 code + 2 prose) | 50.1 tok/s | — |
 
-Kodacceptansen på 71,0 % överträffar receptets referens 68,7 % och bevisar att den
-inbakade Patch 4 är aktiv — utan den ligger acceptansen runt 26 %.
+Code acceptance of 71.0 % exceeds the recipe's own reference (68.7 %), proving the baked-in
+Patch 4 is active. Per-position acceptance: 74.5 / 52.9 / 37.4 / 28.1 / 21.6 %.
 
-**🇸🇪 Svensk text kostar ~9 procentenheter draft-acceptans och ~14 % decode mot engelsk**,
-mätt med innehållsmässigt parade promptar. Det är en egenskap hos drafteren, inte ett
-konfigurationsfel.
+**Swedish text costs ~9 percentage points of draft acceptance and ~14 % decode versus
+English**, measured with content-matched prompt pairs. This is a property of the drafter,
+not a configuration error — consistent with
+[Speculative Decoding Across Languages (arXiv:2605.30580)](https://arxiv.org/abs/2605.30580).
 
-Per-positionsacceptans: 74,5 / 52,9 / 37,4 / 28,1 / 21,6 %.
+## 2. Context depth
 
----
+3 needles per depth (at 8 %, 50 %, 92 % of the document), with distractor codes.
 
-## 2. Kontextdjup
-
-3 nålar per djup (8 %, 50 %, 92 % in i dokumentet), med distraktorkoder.
-
-| Djup | Prompt-tokens | Träffar | TTFT | Prefill |
+| Depth | Prompt tokens | Hits | TTFT | Prefill |
 |---|---|---|---|---|
-| 32K | 33 089 | 3/3 | 0,30 min | 1 810 tok/s |
-| 128K | 132 041 | 3/3 | 1,25 min | 1 758 tok/s |
-| 512K | 529 151 | 3/3 | 6,74 min | 1 308 tok/s |
-| 900K | 929 733 | **3/3** | 15,24 min | 1 017 tok/s |
+| 32K | 33,089 | 3/3 | 0.30 min | 1,810 tok/s |
+| 128K | 132,041 | 3/3 | 1.25 min | 1,758 tok/s |
+| 512K | 529,151 | 3/3 | 6.74 min | 1,308 tok/s |
+| 900K | 929,733 | **3/3** | 15.24 min | 1,017 tok/s |
 
-**12/12 nålar.** Full 1M-retrieval fungerar — något receptet självt inte hade bevisat.
-Prefillen klingar av med djupet (attentionens O(n²)).
+**12/12 needles.** Full 1M retrieval works — something the recipe itself had not
+demonstrated. Prefill decays with depth (attention's O(n²)).
 
-> **1M är en fungerande kapacitet för batchanalys, inte ett interaktivt standardläge.**
-> En 900K-prefill tar en kvart. Ingen sitter och väntar på den i en agentloop.
+> **1M is working capacity for batch analysis, not an interactive mode.** A 900K prefill
+> takes a quarter of an hour. Nobody waits for that inside an agent loop.
 
----
+## 3. Three engines — the most important systems finding
 
-## 3. Tre motorer — den viktigaste systemförklaringen
+An LLM server is not one resource but three nearly independent ones. Same machine, same
+configuration, same hour:
 
-En LLM-server är inte en resurs utan tre nästan oberoende. Samma maskin, samma
-konfiguration, samma timme:
-
-| Motor | Begränsas av | Skalar med samtidighet? |
+| Engine | Bounded by | Scales with concurrency? |
 |---|---|---|
-| **Prefill** | compute | **Nej** — aggregatet helt platt |
-| **Decode** | minnesbandbredd + batchning | **Ja** — +125 % till N=6 |
-| **Admission** | schemaläggning | **Nej** under lång prefill |
+| **Prefill** | compute | **No** — aggregate completely flat |
+| **Decode** | memory bandwidth + batching | **Yes** — +125 % to N=6 |
+| **Admission** | scheduling | **No** during long prefill |
 
-### Prefill-samtidighet (32K per session, end-to-end inkl. prefill)
+### Prefill concurrency (32K per session, end-to-end incl. prefill)
 
-| N | per ström | aggregat | värsta latens |
+| N | per stream | aggregate | worst latency |
 |---|---|---|---|
-| 1 | 6,8 tok/s | 6,8 | 22,1 s |
-| 2 | 3,2 | 6,4 | 40,1 s |
-| 4 | 1,7 | 6,6 | 77,4 s |
-| 6 | 1,3 | **6,5** | 115,2 s |
+| 1 | 6.8 tok/s | 6.8 | 22.1 s |
+| 2 | 3.2 | 6.4 | 40.1 s |
+| 4 | 1.7 | 6.6 | 77.4 s |
+| 6 | 1.3 | **6.5** | 115.2 s |
 
-Aggregatet varierar 5 % medan per-ström faller med faktor 5,2. **Ren serialisering.**
-En enda 32K-prefill mättar systemet.
+Aggregate varies 5 % while per-stream falls by 5.2×. **Pure serialization.** A single 32K
+prefill saturates the system.
 
-### Decode-samtidighet (kort unik prompt, 1200 tokens generering)
+### Decode concurrency (short unique prompt, 1,200-token generation)
 
-| N | aggregat | per ström | TTFT max | acceptans |
+Swedish-prose content (worst case):
+
+| N | aggregate | per stream | TTFT max | acceptance |
 |---|---|---|---|---|
-| 1 | 15,2 | 15,3 | 0,2 s | 21,5 % |
-| 2 | 22,0 | 11,8 (77 %) | 0,4 s | 18,9 % |
-| 4 | **31,5** | 8,3 (54 %) | 0,4 s | 23,4 % |
-| 6 | 34,2 | 6,4 (42 %) | 1,7 s | 23,2 % |
+| 1 | 15.2 | 15.3 | 0.2 s | 21.5 % |
+| 2 | 22.0 | 11.8 (77 %) | 0.4 s | 18.9 % |
+| 4 | **31.5** | 8.3 (54 %) | 0.4 s | 23.4 % |
+| 6 | 34.2 | 6.4 (42 %) | 1.7 s | 23.2 % |
 
-**Mättnad vid N≈4.** Steget 4→6 ger +9 % aggregat men fyrdubblar värsta TTFT.
-*(Baslinjen 15,3 tok/s är låg för att uppgiften var svensk prosa — vårt sämsta innehåll.
-Det är skalningsformen som är resultatet, inte absoluttalet.)*
+Code content:
 
-### Admission under lång prefill
+| N | aggregate | per stream | acceptance |
+|---|---|---|---|
+| 1 | 48.0 tok/s | 48.0 | 62.3 % |
+| 2 | 72.9 | 38.1 | 72.6 % |
+| 4 | **126.3 tok/s** | 34.0 | **71.3 %** |
 
-Tre korta anrop startade 25 s in i ett 516 565-tokens prefill:
+**Saturation around N≈4.** Acceptance holds ~71 % under concurrency — speculation does not
+degrade with parallel streams.
+
+### Admission during long prefill
+
+Three short requests started 25 s into a 516,565-token prefill:
 
 ```
-korta anrop:  367,5s · 367,7s · 367,7s      (normal TTFT varm: 1,66 s)
-långjobbet:   516 565 tok på 391,2 s
+short requests:  367.5 s · 367.7 s · 367.7 s      (normal warm TTFT: 1.66 s)
+long job:        516,565 tok in 391.2 s
 ```
 
-**221× normal latens.** Alla tre släpptes när prefillen var klar.
-Pågående decode svälts samtidigt till **~1/35 av normal hastighet** — inte fryst, men
-strypt till en spillra.
+**221× normal latency.** All three were released when the prefill finished. Ongoing decode
+is simultaneously throttled to **~1/35 of normal speed** — not frozen, but starved.
 
-> Detta gäller **inte** korta prompter: vid N=4 med korta prompter är TTFT 0,4 s.
-> Blockeringen är specifikt kopplad till att lång prefill mättar compute.
+> This does **not** apply to short prompts: at N=4 with short prompts, TTFT is 0.4 s.
+> The blocking is specifically tied to long prefill saturating compute.
 
----
+## 4. Chunk size — MAX_NUM_BATCHED_TOKENS
 
-## 4. Chunkstorlek — `MAX_NUM_BATCHED_TOKENS`
+Measured at 256K prefill, `--async-scheduling` off in both cases.
 
-Mätt vid 256K prefill, `--async-scheduling` av i båda fallen.
-
-| Mått | 8192 | 2048 |
+| Metric | 8192 | 2048 |
 |---|---|---|
-| Prefill | 1 529 tok/s | 1 469 tok/s (**−3,9 %**) |
-| p95 tokenlucka under prefill | 5,197 s | **1,590 s** (−69 %) |
-| max tokenlucka | 6,417 s | 2,085 s |
-| Decode-andel under prefill | 7,1 % | 7,3 % (**oförändrad**) |
-| TTFT nytt kort anrop | 150,7 s | 158,1 s (oförändrad) |
-| **KV-pool** | 1 598 763 tok | **2 671 557 tok** (+67 %) |
-| Max samtidighet @1M | 1,59× | **2,55×** |
+| Prefill | 1,529 tok/s | 1,469 tok/s (**−3.9 %**) |
+| p95 token gap during prefill | 5.197 s | **1.590 s** (−69 %) |
+| max token gap | 6.417 s | 2.085 s |
+| Decode share during prefill | 7.1 % | 7.3 % (**unchanged**) |
+| TTFT of a new short request | 150.7 s | 158.1 s (unchanged) |
+| **KV pool** | 1,598,763 tok | **2,671,557 tok** (+67 %) |
+| Max concurrency @1M | 1.59× | **2.55×** |
 
-**Mekanismen är bekräftad:** tokenluckorna *är* prefill-chunkarna.
-`8192 ÷ 1529 = 5,36 s` mot uppmätt p95 5,20 s. Vid 2048: `2048 ÷ 1469 = 1,39 s` mot uppmätt 1,59 s.
+**The mechanism is confirmed:** the token gaps *are* the prefill chunks.
+`8192 ÷ 1529 = 5.36 s` vs measured p95 5.20 s. At 2048: `2048 ÷ 1469 = 1.39 s` vs 1.59 s.
 
-**Men chunkstorleken är en jitterspak, inte en rättvisespak.** Decode-andelen ligger fast
-på ~7 %: vid 8192 hinner decode ~9 tokens per chunk, vid 2048 ~2,3 — fyra gånger fler
-tillfällen, fyra gånger färre tokens per tillfälle, netto noll. Schemaläggaren ger decode
-en *fast andel av tokenbudgeten*, och den andelen kan inte ändras genom att ändra budgetens storlek.
+**But chunk size is a jitter lever, not a fairness lever.** Decode share is pinned at ~7 %:
+at 8192 decode fits ~9 tokens per chunk, at 2048 ~2.3 — four times more opportunities,
+four times fewer tokens each, net zero. The scheduler gives decode a *fixed share of the
+token budget*, and that share cannot be changed by changing the budget's size.
 
-**Slutsats:** 2048 ger kraftigt bättre jitter och 67 % större KV-pool för 4 % prefill.
-Den löser inte rättvisa eller admission. Den är ändå en stark agentprofil.
+vLLM's chunked-prefill design states pending decodes should be prioritized and mixed with
+prefill — this stack deviates from that stated intent. See [`repro/`](../repro/) for a
+minimal reproduction.
 
-`--async-scheduling` av gav ingen meningsfull förbättring → flaggan var inte roten.
+**Conclusion:** 2048 buys much better jitter and a 67 % larger KV pool for 4 % prefill.
+It does not fix fairness or admission. It is still a strong agent profile.
 
----
+## 5. Prefix cache locality
 
-## 5. Prefix-cachelokalitet ⭐ det mest generellt användbara resultatet
+Same context sent repeatedly with ~200 tokens of growth per turn. Variants differ **only
+in where a mutating field sits**.
 
-Samma kontext skickad om och om igen med ~200 tokens tillväxt per varv. Varianterna
-skiljer sig **bara i var ett muterande fält ligger**.
-
-| Variant | TTFT snitt (varv 2–8) | vs clean |
+| Variant | TTFT mean (turns 2–8) | vs clean |
 |---|---|---|
-| clean (inget muterar) | 0,65 s | 1,0× |
-| **dirty-bottom** (muterar sist) | **0,45 s** | **0,7×** |
-| dirty-middle | 14,64 s | 22,5× |
-| **dirty-top** (muterar överst) | **18,05 s** | **27,7×** |
+| clean (nothing mutates) | 0.65 s | 1.0× |
+| **dirty-bottom** (mutates last) | **0.45 s** | **0.7×** |
+| dirty-middle | 14.64 s | 22.5× |
+| **dirty-top** (mutates first) | **18.05 s** | **27.7×** |
 
-**40 gångers skillnad mellan att mutera sist och överst.**
+`dirty-bottom` is not merely close to clean — it is *faster*, because the mutation lands in
+its own partially filled block. **Volatile fields at the end are effectively free.**
 
-`dirty-bottom` är inte bara nära clean — den är *snabbare*, eftersom mutationen hamnar i
-ett eget delvis fyllt block. **Volatila fält sist är i praktiken gratis.**
-
-### Verifierat med `prompt_locality.py` mot serverns egen tokenizer
-
-Identisk 16 839-tokens prompt, bara tidsstämpelns placering skiljer:
+Verified with `prompt_locality.py` against the server's own tokenizer — identical
+16,839-token prompt, only the timestamp's position differs:
 
 ```
-TIDSSTÄMPEL ÖVERST              TIDSSTÄMPEL SIST
-första divergens: token 13      första divergens: token 16 834
-återanvändbar:    0 (0,0 %)     återanvändbar:    16 640 (98,8 %)
-omprefill:        16 839 (100%) omprefill:        200 (1,2 %)
-extrakostnad:     11,2 s/varv   extrakostnad:     0,1 s/varv
+TIMESTAMP AT TOP                  TIMESTAMP AT END
+first divergence: token 13        first divergence: token 16,834
+reusable:  0 (0.0 %)              reusable:  16,640 (98.8 %)
+re-prefill: 16,839 (100 %)        re-prefill: 200 (1.2 %)
+extra cost: ~11 s/turn            extra cost: ~0.1 s/turn
 ```
 
-**112× skillnad i omprefill genom att flytta ett fält.** I en agentloop med tjugo steg är
-det fyra minuter förlorade på en tidsstämpel.
+With `--block-size 256` the outcome is **binary, not gradual**: a mutation in the first
+block yields zero reuse. A changed token never costs "one token" — it costs at least 256,
+plus everything after it.
 
-Med `--block-size 256` är utfallet **binärt, inte gradvis**: en mutation i första blocket
-ger noll procent återanvändning. En ändrad token kostar aldrig "en token" — den kostar
-minst 256, och allt efter den.
+> **Design rule: static first, dynamic last.** System prompt, tool definitions and stable
+> history byte-identical at the top; timestamps, current status and fresh tool results at
+> the end. This is established vendor guidance — the numbers above are what it is worth
+> on this stack.
 
-> ## 🎯 Designregel
-> **Statiskt först, dynamiskt sist.**
-> Systemprompt, verktygsdefinitioner och stabil historik byte-identiska överst.
-> Tidsstämplar, aktuell status och nya verktygsresultat sist.
->
-> Gäller oavsett hårdvara och inferensmotor. Kostar ingenting att följa.
+### Cross-stack replication (Laguna S 2.1)
 
-Vanliga cachebrytare att kontrollera: verktygslistans ordning · JSON-nyckelordning ·
-whitespace · request-ID · omsorterat minne · dynamiskt tillagd systemtext.
+The same test, unchanged, on a substantially different stack — different model (67 GB NVFP4
+vs 304B MoE), tokenizer, chat template, parser, FP4 backend (FLASHINFER_CUTLASS vs B12X),
+vLLM version (0.25.1 upstream vs 0.21.1 DSpark), speculation (DFlash k=15 vs DSpark k=5)
+and topology (single node vs TP=2):
 
----
+| Variant | Laguna (12K ctx) | DS4 (19K ctx) |
+|---|---|---|
+| clean | 1.0× | 1.0× |
+| dirty-bottom | **1.1×** | 0.7× |
+| dirty-middle | **9.1×** | 22.5× |
+| dirty-top | **15.1×** | 27.7× |
 
-## 6. Rekommenderade profiler
+Form replicated; effect size is stack- and context-size-dependent (fixed costs compress the
+ratios at smaller context). Token-level mechanism verified on Laguna too: top mutation →
+divergence at token 16 → block 0 → 0.0 % reuse; bottom mutation → 98.3 % reuse.
+Pre-registered hypotheses, including one honestly failed prediction:
+[`HYPOTHESES-laguna-replication.md`](HYPOTHESES-laguna-replication.md).
 
-### Agentprofil *(standard)*
-```
-MAX_NUM_BATCHED_TOKENS=2048
-MAX_NUM_SEQS=6          # cudagraph = seqs × (k+1) = 36
-GPU_MEMORY_UTILIZATION=0.78
-MTP_NUM_TOKENS=5
-```
-- högst ~4 samtidiga genereringar (mättnadspunkt)
-- normal kontext ≤128K
-- dynamiska promptfält sist
-- `repetition_penalty` **filtreras i gateway** — kraschar DSpark-vägen med illegal memory access
-- `presence_penalty` och `frequency_penalty` **tillåts** — verifierat säkra vid 0,6 och 1,5
+## 6. UMA memory gate — systematic reproduction of vLLM #48140
 
-### Batchprofil *(långkontext)*
-```
-MAX_NUM_BATCHED_TOKENS=8192
-```
-- 512K–1M
-- **exklusiv körning**, ingen samtidig agenttrafik
-- schemalagt batcharbete
+Laguna S 2.1's 262K production profile **does not boot** on this node. Three boots, three
+nearly identical reported budgets regardless of process history, JIT state and memory
+start state:
 
-Köseparationen är inte en workaround. Vi har testat den enda spak som rimligen kunde ha
-löst samexistensen, och den kan det inte.
+| Boot | Reported available KV | Requirement (262K) | Outcome |
+|---|---|---|---|
+| cold JIT | 4.22 GiB | 18.35 GiB | deterministic refusal |
+| warm JIT | 5.18 GiB | 18.35 GiB | deterministic refusal |
+| warm JIT, 32K profile | 5.34 GiB | ~2.3 GiB | **boots** (67,236-token KV pool) |
 
----
+Mechanism ([vLLM #48140](https://github.com/vllm-project/vllm/issues/48140), closed "not
+planned"): the startup check effectively reads Linux `MemFree`, so ~20 GB of reclaimable
+page cache (from reading the weights!) is booked as unavailable. The page cache has a dual
+role: the same pages *speed up* weight loading (8.75 s/shard vs 11.5 cold) and *lower* the
+reported KV budget.
 
-## 7. Slutsatser vi korrigerade efter bättre mätning
+Operational profiles: 32K–64K boots normally (keep the page cache); 128K–262K requires
+`drop_caches` before start (**the proposed workaround remains unverified on this
+deployment**) or a local UMA patch of `gpu_worker.py` to use `MemAvailable`.
 
-Dokumenterade för att de är lika användbara som resultaten.
+### Startup profile (three starts measured, Laguna)
 
-1. **Max-gap-testet feltolkade partiell svält som "grönt".** Vår första
-   överlappsmätning letade efter ett *stopp* längre än 20 s. Det inträffade aldrig, så
-   skriptet skrev ut "decode fortsatte" — trots att decode var strypt till 1/35 av normal
-   fart. **Mät p50/p95 av tokenintervall, inte bara största lucka.**
-2. **`GMU 0.70` som "säkerhetsåtgärd" var destruktivt.** Vikterna tar 77,7 GiB av nodens
-   ~119,6 GiB. Vid 0,70 blev KV-utrymmet 2,39 GiB — otillräckligt för ens 32K.
-   **GMU är en KV-spak, inte en säkerhetsspak, när vikterna dominerar minnet.**
-3. **`MAX_NUM_SEQS=1` bootar inte med k=5.** Cudagraph-storlekar måste vara multiplar av
-   k+1; kandidaterna [1, 2, 4] innehåller ingen multipel av 6.
-   **Allt runt spekulationen måste vara multiplar av k+1.** (Samma familj som k=7-förbudet.)
-4. **Prefix-cachen kontaminerade ett samtidighetstest.** Två långa jobb byggda med samma
-   funktion fick identisk text; jobb två fick cacheträff i stället för att prefilla.
-   **Salta varje prompt unikt.**
-5. **`rsync -aL` på en HF-cache dubblerar den** (~311 GiB i stället för ~155). `-L`
-   dereferensar snapshot-symlänkarna. Använd `-a`.
-6. **Admission-blockering är inte "mindre allvarlig" än decode-svält.** En agentloop är
-   `modell → verktyg → modell`; varje pil är ett nytt API-anrop. Admission-blockering
-   träffar varje steg efter varje verktygsanrop.
-7. **`pkill -f <mönster>` self-matchar.** En väntloop på `pgrep -f conc.py` matchade
-   `decconc.py` — sitt eget kommando — och väntade på sig själv. Använd PID.
-
-## 8. Kända begränsningar i mätningarna
-
-- Prefill-samtidighetstestet är prefill-dominerat (32K prompt, ~150 genererade tokens)
-  och säger inget om decode-samtidighet — därav det separata decode-testet.
-- Decode-baslinjen använde svensk prosa, vårt sämsta innehåll för draft-acceptans.
-  Absoluttalen är därför låga; skalningsformen är resultatet.
-- Referensdecode i överlappstesterna mättes på kall server (23–24 tok/s). Båda
-  konfigurationerna mättes under samma förhållanden, så jämförelsen är rättvis.
-- Andra långa jobbet i test B fick cacheträff → bandbreddsdelning mellan två prefills
-  är fortfarande obesvarad.
-- Ingen soak-körning gjord. Xid senaste 2 h: 0. Minnet återgick efter avslutade jobb.
-- Stage C:s 584-byte-envelope och k=3:s påstådda 24 %-kostnad är hämtade från receptet
-  och **inte** egenverifierade.
-
----
-
-## 9. Laguna-replikationen och nattens driftfynd (2026-08-02, 00:00–00:40)
-
-### Cachelokaliteten replikerad — se `HYPOTHESES-laguna-replication.md`
-
-H1, H2 och H4 bekräftade på Laguna S 2.1 (vLLM 0.25.1, en nod, poolside-tokenizer):
-`bottom ≈ clean (1,1×) << middle (9,1×) < top (15,1×)`, och analysatorn förutsade
-block 0 / 0 % korrekt mot en okalibrerad tokenizer. H3:s absoluta del missade
-(13× mot förutsagt 20–40×) — fasta kostnader komprimerar kvoterna vid mindre kontext.
-
-### 🔴 Laguna 262K bootar inte — vLLM #48140 (stängd "not planned")
-
-vLLM:s UMA-startkontroll läser i praktiken `MemFree`, inte `MemAvailable` — reclaimbar
-sidcache bokförs som upptagen. Tre starter, tre nästan identiska budgetar oavsett
-processhistorik och minnesstartläge: **4,22 / 5,18 / 5,34 GiB** rapporterat tillgängligt KV.
-262K kräver 18,35 GiB → deterministisk krasch. 32K kräver ~2,3 GiB → bootar (67 236 tokens
-KV-pool, 2,05× samtidighet).
-
-| Laguna-profil | Status |
+| Phase | Time |
 |---|---|
-| 32K–64K | ✅ bootar normalt, behåll sidcachen (den *snabbar* laddningen) |
-| 128K–262K | 🔴 kräver `drop_caches` före start (overifierat) eller lokal UMA-patch av `gpu_worker.py`. Kausalitetstest återstår: bootar 262K efter cachetömning är diagnosen komplett |
+| FP4 JIT, cold kernel cache | ~24 min (one-time; cache in `~/.cache/vllm`, persistent) |
+| Weight loading | ~12–13 min regardless of start state; first ~10 shards slower (UVM ramp) |
+| Profiling/capture/autotune | ~2–4 min |
+| **Cold total** | **~39 min** |
+| **Warm total (to API)** | **13 min 16 s measured** |
+| Ready (generation 1) | +5.1 s |
+| Warm (generation 2) | 3.5 s |
 
-**Sidcachens dubbelroll:** samma sidor snabbar viktladdningen (8,75 s/shard i tredje
-starten mot 11,5 kall) och sänker samtidigt den rapporterade KV-budgeten. Bra för
-laddaren, gift för profileraren.
+The weight loader is single-threaded (101 % CPU) — the floor for every restart, cache or
+not. Readiness should be measured to the first successful generation, not the open port.
 
-### Lagunas startprofil (tre starter uppmätta)
+## 7. Conclusions we corrected after better measurement
 
-| Fas | Tid |
-|---|---|
-| FP4-JIT, kall kernelcache | ~24 min (engångs; cache i `~/.cache/vllm`, persistent) |
-| Viktladdning | ~12–13 min oavsett startläge; första ~10 shards långsammare (UVM-ramp) |
-| Profilering/capture/autotune | ~2–4 min |
-| **Kall totalt** | **~39 min** |
-| **Varm totalt (till API)** | **13 min 16 s uppmätt** |
-| Ready (generation 1) | +5,1 s |
-| Warm (generation 2) | 3,5 s |
+Kept because they are as useful as the results.
 
-Viktladdaren är enkeltrådad (101 % CPU) — golvet för varje omstart, oavsett cache.
+1. **A max-gap test misread partial starvation as "green".** Our first overlap measurement
+   looked for a stall > 20 s; none occurred, so the script printed "decode continued" —
+   while decode was throttled to 1/35 of normal. **Measure p50/p95 token intervals.**
+2. **GPU-mem-util 0.70 as a "safety measure" was destructive.** Weights take 77.7 GiB of a
+   ~119.6 GiB node; at 0.70 the KV budget fell to 2.39 GiB — insufficient for even 32K.
+   **When weights dominate memory, GMU is a KV lever, not a safety lever.**
+3. **`MAX_NUM_SEQS=1` does not boot with k=5.** CUDA-graph sizes must be multiples of k+1.
+4. **The prefix cache contaminated a concurrency test** (two long jobs with identical text;
+   job two got a cache hit instead of prefilling). **Salt every prompt.**
+5. **`rsync -aL` on a HF cache doubles it** (~311 GiB instead of ~155): `-L` dereferences
+   the snapshot symlinks. Use `-a`.
+6. **Admission blocking is not "less serious" than decode starvation.** An agent loop is
+   `model → tool → model`; every arrow is a new API call.
+7. **`pkill -f` self-matches — even across SSH**, where the pattern sits in the remote
+   shell's command line. Three incidents in one night. Use `[b]racket` patterns or PID files.
+8. **Do not judge model loading or memory from process RSS on GB10** — CUDA/UVM
+   allocations don't appear there. Read system `free` and the engine's own logs.
+9. **Do not read an instantaneous ETA as a trend**, and **compare the same phase between
+   runs** — early-shard rate vs steady-state rate produced a false 2.6× conclusion.
 
-### Nya mätdisciplinregler (dyrköpta i natt)
+## 8. Known limitations
 
-6. **Lita inte på process-RSS på GB10** — CUDA/UVM-allokeringar syns inte där. Läs
-   systemets `free` och motorns egna loggar.
-7. **Läs inte momentan ETA som trend** — shard-takt under uppramp gav en falsk
-   2,6×-slutsats som självdog vid shard 26.
-8. **Jämför samma fas mellan körningar** — tidiga shards mot tidiga shards, stabil
-   fas mot stabil fas.
-9. **`pkill`/`pgrep -f` self-matchar även över SSH** — mönstret finns i fjärrskalets
-   kommandorad. Använd `[b]racket`-mönster eller PID-filer. (Bet oss tre gånger.)
+- The prefill concurrency test is prefill-dominated by design and says nothing about
+  decode concurrency (hence the separate test).
+- Reference decode in the overlap tests was measured on a cool server (23–24 tok/s); both
+  configurations were measured under equal conditions, so the comparison holds.
+- Whether two concurrent prefills share bandwidth is **unanswered** (cache contamination).
+- No long soak yet. Xid errors during the session: 0.
+- Quality gain vs the previous model (Artificial Analysis 40 → 50) is the vendor's figure
+  at maximum reasoning effort; our production setting (`thinking=false`) is unmeasured.
+- The old production model's admission behavior was never measured — the ~7 % decode share
+  may be inherited rather than new.
 
----
+## 9. Real agent workload (Hermes v0.19.0)
 
-## 10. Real agent workload (Hermes v0.19.0, 2026-08-02 01:10)
-
-A real agent task was run through the capture proxy against the 2048 agent profile:
-find and fix a planted bug in a small Python project, run the test suite, handle the
-failing test, summarize. The agent solved it correctly (bug found: `len(stock)` →
-`sum(stock.values())`; 4/4 tests passing) in 10 model calls with 20 tool definitions
-and a ~15–18K-token growing prompt.
+A real agent task through the capture proxy against the 2048 agent profile: find and fix a
+planted bug in a small Python project, run the test suite, handle the failing test,
+summarize. The agent solved it correctly (bug found: `len(stock)` → `sum(stock.values())`;
+4/4 tests passing) in 10 model calls with 20 tool definitions and a ~15–18K-token growing
+prompt. A second task (string-conversion bug class) completed correctly in **316 s**.
 
 **Prompt locality across agent turns (server tokenizer, 256-token blocks):**
 
@@ -343,29 +300,7 @@ and a ~15–18K-token growing prompt.
 | turn 9→10 | 17,655 tok | token 17,654 (last) | **97.5 %** | 439 tok |
 
 **The agent framework is already cache-optimal.** Prompts are built append-only: no
-mutating timestamps, no reordered tool lists, no rewritten history. Divergence sits at
-the very last token of the previous prompt, every turn. Each agent step re-prefills only
-the new tail (~200–450 tokens ≈ 0.2 s) instead of the full context (~10 s).
-
-This is the null-result counterpart to the synthetic dirty-top experiments: the tool's
-value here was *verifying* cache health, not finding a problem. Frameworks that inject
-volatile content early would show divergence at token ~13 instead — an 
-order-of-magnitude-larger per-turn cost that this analysis makes visible in seconds.
-
-### Code-content decode concurrency and end-to-end agent timing (01:30)
-
-Decode concurrency re-measured with **code content** (the Swedish-prose run above was the
-worst case; agent workloads are code-dominated):
-
-| N | aggregate | per stream | draft acceptance |
-|---|---|---|---|
-| 1 | 48.0 tok/s | 48.0 | 62.3 % |
-| 2 | 72.9 | 38.1 | 72.6 % |
-| 4 | **126.3 tok/s** | 34.0 | **71.3 %** |
-
-Acceptance holds ~71 % under concurrency — speculation does not degrade with parallel
-streams. At N=4, each stream still receives roughly what the previous production model
-delivered to a single user (35.1 tok/s).
-
-A second end-to-end agent task (different bug class) completed correctly in **316 s**,
-10-ish model calls, 4/4 tests passing.
+mutating timestamps, no reordered tool lists, no rewritten history. Each agent step
+re-prefills only the new tail (~200–450 tokens ≈ 0.2 s) instead of the full context
+(~10 s). This is the null-result counterpart to the synthetic dirty-top experiments: the
+tool's value here was *verifying* cache health, not finding a problem.

@@ -14,34 +14,34 @@ def call(txt, mt=80, timeout=2400):
     return d["choices"][0]["message"].get("content") or "", d["usage"]["prompt_tokens"], e
 
 
-FILL = ("Driftanteckning: rutinkontroll av kylsystem och natverkslankar genomford utan anmarkning. "
-        "Loggrotation verifierad. Backup slutford enligt schema. Inga larm registrerade under passet. ")
-DIST = "Referenskod QX-00000 ar ogiltig och ska ignoreras. "
+FILL = ("Operations note: routine check of cooling and network links completed without remarks. "
+        "Log rotation verified. Backup finished on schedule. No alarms registered during the shift. ")
+DIST = "Reference code QX-00000 is invalid and must be ignored. "
 
-N_START = "NYCKEL-ALFA-4471"
-N_MID = "NYCKEL-BETA-8823"
-N_END = "NYCKEL-GAMMA-1590"
+N_START = "KEY-ALPHA-4471"
+N_MID = "KEY-BETA-8823"
+N_END = "KEY-GAMMA-1590"
 
 
 def build(target_tokens):
     chunk = FILL * 8 + DIST
-    per = int(len(chunk) / 3.6)          # ~3.6 tecken per token for denna text
+    per = int(len(chunk) / 3.6)          # ~3.6 chars per token for this text
     n = max(4, target_tokens // per)
     body = []
     for i in range(n):
         body.append(chunk)
         if i == int(n * 0.08):
-            body.append("\nVIKTIGT: forsta koden ar " + N_START + ".\n")
+            body.append("\nIMPORTANT: the first code is " + N_START + ".\n")
         if i == int(n * 0.50):
-            body.append("\nVIKTIGT: andra koden ar " + N_MID + ".\n")
+            body.append("\nIMPORTANT: the second code is " + N_MID + ".\n")
         if i == int(n * 0.92):
-            body.append("\nVIKTIGT: tredje koden ar " + N_END + ".\n")
-    q = ("\n\nFraga: rakna upp de tre koder som markerats som VIKTIGT, i ordning, "
-         "separerade med komma. Svara med enbart koderna.")
+            body.append("\nIMPORTANT: the third code is " + N_END + ".\n")
+    q = ("\n\nQuestion: list the three codes marked IMPORTANT, in order, "
+         "separated by commas. Reply with only the codes.")
     return "".join(body) + q
 
 
-print("djup     prompt_tok    traffar   TTFT        prefill", flush=True)
+print("depth    prompt_tok    hits      TTFT        prefill", flush=True)
 for target in (32000, 128000, 512000, 900000):
     txt = build(target)
     try:
@@ -50,11 +50,11 @@ for target in (32000, 128000, 512000, 900000):
         print("%4dK   %10s    %d/3      %5.2f min   %6.0f tok/s"
               % (target // 1000, format(pt, ","), hits, e / 60, pt / e), flush=True)
         if hits < 3:
-            print("        svar: " + c[:120].replace("\n", " "), flush=True)
+            print("        answer: " + c[:120].replace("\n", " "), flush=True)
     except Exception as ex:
         print("%4dK   FEL: %s %s" % (target // 1000, type(ex).__name__, str(ex)[:90]), flush=True)
 
-print("\n=== SAMTIDIGHET: 1x langt (500K) + 3x korta ===", flush=True)
+print("\n=== CONCURRENCY: 1x long (500K) + 3x short ===", flush=True)
 longtxt = build(500000)
 lat = []
 done = []
@@ -62,7 +62,7 @@ done = []
 
 def short(i):
     t = time.time()
-    call("Skriv en mening om havet.", mt=40)
+    call("Write one sentence about the sea.", mt=40)
     lat.append(time.time() - t)
 
 
@@ -84,6 +84,6 @@ for t in ts:
     t.join()
 tl.join()
 if lat:
-    print("korta anrop under langt: " + ", ".join("%.1fs" % x for x in lat)
+    print("short requests during long: " + ", ".join("%.1fs" % x for x in lat)
           + "   max=%.1fs" % max(lat), flush=True)
-print("langa anropet: " + str(done), flush=True)
+print("long request: " + str(done), flush=True)

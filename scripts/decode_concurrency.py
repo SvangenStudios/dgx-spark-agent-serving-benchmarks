@@ -1,8 +1,12 @@
-"""Decode-samtidighet, isolerad fran prefill.
+"""Decode concurrency, isolated from prefill.
 
-Kort unik prompt (~100 tok) + lang generering (1200 tok) -> decode dominerar.
-Mater per N: aggregat decode, per-strom decode, TTFT per strom, p50/p95
-tokenintervall, faktisk tokenmangd, och DRAFT-ACCEPTANS per niva.
+Short unique prompt (~100 tok) + long generation (1200 tok) -> decode dominates.
+Per N: aggregate decode, per-stream decode, TTFT per stream, p50/p95 token
+intervals, actual token counts, and DRAFT ACCEPTANCE per level.
+
+Note: generation content language strongly affects draft acceptance (we measured
+71 % on code vs 19.5 % on Swedish prose on the same stack). The topics below are
+deliberately non-English as a worst case; edit TOPICS for your locale.
 """
 import json, re, time, urllib.request, threading
 
@@ -39,8 +43,8 @@ def pct(v, p):
 
 def stream(idx, out):
     topic = TOPICS[idx % len(TOPICS)]
-    prompt = ("Session %d. Skriv en mycket utforlig teknisk text om %s. "
-              "Var konkret och detaljerad, minst tusen ord." % (idx, topic))
+    prompt = ("Session %d. Write a very thorough technical text about %s. "
+              "Be concrete and detailed, at least a thousand words." % (idx, topic))
     p = {"model": "deepseek-v4-flash-0731",
          "messages": [{"role": "user", "content": prompt}],
          "max_tokens": 1200, "temperature": 0, "stream": True}
@@ -62,14 +66,14 @@ def stream(idx, out):
                     "tps": (len(ts) - 1) / (ts[-1] - ts[0]), "gaps": gaps})
 
 
-print("varmer upp (3 langa generationer)...", flush=True)
+print("warming up (3 long generations)...", flush=True)
 w = []
 for i in range(3):
     stream(90 + i, w)
 if w:
-    print("  uppvarmd decode: %.1f tok/s" % w[-1]["tps"], flush=True)
+    print("  warmed decode: %.1f tok/s" % w[-1]["tps"], flush=True)
 
-print("\n  N   aggregat   per-strom   TTFT min/max      p50/p95 gap     tokens   acceptans", flush=True)
+print("\n  N   aggregate  per-stream  TTFT min/max      p50/p95 gap     tokens   acceptance", flush=True)
 for N in (1, 2, 4, 6):
     res = []
     a0, d0 = counters()
@@ -82,7 +86,7 @@ for N in (1, 2, 4, 6):
     wall = time.time() - t0
     a1, d1 = counters()
     if not res:
-        print("%3d   INGA SVAR" % N, flush=True)
+        print("%3d   NO RESPONSES" % N, flush=True)
         continue
     agg = sum(r["n"] for r in res) / wall
     per = sum(r["tps"] for r in res) / len(res)

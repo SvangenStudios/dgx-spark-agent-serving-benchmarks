@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""Prompt Cache Analyzer — vad kostar skillnaden mellan tva prompter?
+"""Prompt Cache Analyzer — what does the difference between two prompts cost?
 
-Anvander serverns EGEN tokenizer (/tokenize) sa blockgranserna blir exakta.
+Uses the server's OWN tokenizer (/tokenize) so block boundaries are exact.
 
-  python3 cacheanalyze.py a.json b.json      # tva chat-completion-bodies
-  python3 cacheanalyze.py a.txt b.txt        # tva rena texter
+  python3 prompt_locality.py a.json b.json   # two chat-completion bodies
+  python3 prompt_locality.py a.txt b.txt     # two plain texts
 
-Tva lagen:
-  TOKENLAGE     exakt forsta divergens, blockindex, teoretisk ateranvandning
-  STRUKTURLAGE  (for JSON) vilken message/falt som flyttats eller andrats
+Two modes:
+  TOKEN MODE      exact first divergence, block index, theoretical reuse
+  STRUCTURE MODE  (for JSON) which message/field moved or changed
 """
 import json, os, sys, urllib.request
 
-# REDACT=1 -> skriv aldrig ut promptinnehall, bara positioner och andelar.
+# REDACT=1 -> never print prompt content, only positions and fractions.
 REDACT = os.environ.get("REDACT", "0") == "1"
 
 BASE = os.environ.get("BASE", "http://127.0.0.1:8888")
@@ -20,14 +20,14 @@ MODEL = os.environ.get("MODEL", "deepseek-v4-flash-0731")
 BLOCK = 256
 
 
-# Uppmatt prefillhastighet per kontextdjup (DS4-0731, 2x DGX Spark, chunk 8192).
-# Attention ar O(n^2) -> hastigheten faller med djupet. En konstant underskattar
-# kostnaden for djupa kontexter kraftigt. Kalibrera om for andra riggar.
+# Measured prefill rate per context depth (DS4-0731, 2x DGX Spark, chunk 8192).
+# Attention is O(n^2) -> rate drops with depth. A constant badly underestimates
+# the cost at deep contexts. Recalibrate for other rigs.
 PREFILL_CURVE = [(33089, 1810.0), (132041, 1758.0), (529151, 1308.0), (929733, 1017.0)]
 
 
 def prefill_rate(n_tokens):
-    """Linjart interpolerad prefillhastighet vid givet djup."""
+    """Linearly interpolated prefill rate at a given depth."""
     if n_tokens <= PREFILL_CURVE[0][0]:
         return PREFILL_CURVE[0][1]
     if n_tokens >= PREFILL_CURVE[-1][0]:
@@ -46,7 +46,7 @@ def tokenize(text):
 
 
 def flatten(obj):
-    """Chat-body -> den text som faktiskt hamnar i prompten (approximativt men konsekvent)."""
+    """Chat body -> the text that actually ends up in the prompt (approximate but consistent)."""
     if isinstance(obj, dict) and "messages" in obj:
         parts = []
         for m in obj["messages"]:
@@ -74,24 +74,24 @@ def structure_diff(a, b):
     out = []
     ta, tb = json.dumps(a.get("tools"), sort_keys=True), json.dumps(b.get("tools"), sort_keys=True)
     if ta != tb:
-        out.append("tools: definitionerna eller deras ordning skiljer sig")
+        out.append("tools: definitions or their order differ")
     ma, mb = a.get("messages", []), b.get("messages", [])
     if len(ma) != len(mb):
-        out.append("messages: antal %d -> %d" % (len(ma), len(mb)))
+        out.append("messages: count %d -> %d" % (len(ma), len(mb)))
     for i in range(min(len(ma), len(mb))):
         if ma[i] != mb[i]:
             ra = ma[i].get("role")
             ca, cb = str(ma[i].get("content")), str(mb[i].get("content"))
             j = next((k for k in range(min(len(ca), len(cb))) if ca[k] != cb[k]), min(len(ca), len(cb)))
             if REDACT:
-                out.append("messages[%d] (%s): skiljer fran tecken %d  [innehall dolt, REDACT=1]"
+                out.append("messages[%d] (%s): differs from character %d  [content hidden, REDACT=1]"
                            % (i, ra, j))
             else:
-                out.append("messages[%d] (%s): skiljer fran tecken %d  ...%s... -> ...%s..."
+                out.append("messages[%d] (%s): differs from character %d  ...%s... -> ...%s..."
                            % (i, ra, j, ca[max(0, j - 25):j + 25].replace("\n", " "),
                               cb[max(0, j - 25):j + 25].replace("\n", " ")))
             if i < len(ma) - 1:
-                out.append("  ^ detta ar INTE sista meddelandet -> allt efter det invalideras ocksa")
+                out.append("  ^ this is NOT the last message -> everything after it is invalidated too")
     return out
 
 
@@ -110,47 +110,47 @@ def main():
     print("Prompt A:                  %s tokens" % format(len(ta), ","))
     print("Prompt B:                  %s tokens" % format(len(tb), ","))
     if div < 0:
-        print("\nIdentiska -> 100 %% cachetraff, 0 tokens omprefill.")
+        print("\nIdentical -> 100 %% cache hit, 0 tokens re-prefilled.")
         return
     blk = div // BLOCK
     reuse = blk * BLOCK
     refill = len(tb) - reuse
-    print("Forsta divergens:          token %s" % format(div, ","))
-    print("Blockstorlek:              %d" % BLOCK)
-    print("Forsta ogiltiga block:     %d av %d" % (blk, (len(tb) + BLOCK - 1) // BLOCK))
-    print("Ateranvandbar prefixcache: %s tokens (%.1f %%)" % (format(reuse, ","), 100.0 * reuse / len(tb)))
-    print("Omprefill:                 %s tokens (%.1f %%)" % (format(refill, ","), 100.0 * refill / len(tb)))
+    print("First divergence:          token %s" % format(div, ","))
+    print("Block size:                %d" % BLOCK)
+    print("First invalidated block:   %d of %d" % (blk, (len(tb) + BLOCK - 1) // BLOCK))
+    print("Reusable prefix cache:     %s tokens (%.1f %%)" % (format(reuse, ","), 100.0 * reuse / len(tb)))
+    print("Re-prefill:                %s tokens (%.1f %%)" % (format(refill, ","), 100.0 * refill / len(tb)))
 
-    # --- tidsestimat: separat sektion, med explicit lagre konfidens ---
-    # Kostnaden ar INTE proportionell mot antalet omraknade tokens. Attention ar
-    # O(n^2): en token vid position i attendar over hela sitt prefix. Ett suffix
-    # fran position p kostar (n^2 - p^2)/2, alltsa andelen 1 - (p/n)^2.
-    # Verifierat mot egen matning: middle/top-kvoten blev 0,811 uppmatt;
-    # positionsmodellen ger 0,75-0,80, den naiva tokenmodellen 0,50.
+    # --- time estimate: separate section, explicitly lower confidence ---
+    # The cost is NOT proportional to the number of recomputed tokens. Attention
+    # is O(n^2): a token at position i attends over its whole prefix. A suffix
+    # from position p costs (n^2 - p^2)/2, i.e. the fraction 1 - (p/n)^2.
+    # Verified against our own measurement: middle/top ratio measured 0.811;
+    # the positional model gives 0.75-0.80, the naive token model 0.50.
     n = len(tb)
     frac = 1.0 - (reuse / float(n)) ** 2
     full = n / prefill_rate(n)
     est = full * frac
-    print("\n--- TIDSESTIMAT (lagre konfidens an cachesiffrorna ovan) ---")
-    print("Positionsandel av full prefill: %.1f %%   [1 - (p/n)^2]" % (100 * frac))
-    print("Uppskattad extrakostnad:        ~%.1f s" % est)
-    print("Kalibrering:                    chunk 8192, DS4-0731 pa 2x DGX Spark")
-    print("VARNING: tidsestimatet ar konfigurationsberoende och OKALIBRERAT for")
-    print("         andra runtimeprofiler. Uppmatt avvikelse upp till 1,7x nar")
-    print("         kalibreringen gjordes med annan MAX_NUM_BATCHED_TOKENS.")
-    print("         Cachesiffrorna ovan ar daremot deterministiska.")
+    print("\n--- TIME ESTIMATE (lower confidence than the cache figures above) ---")
+    print("Positional share of full prefill: %.1f %%   [1 - (p/n)^2]" % (100 * frac))
+    print("Estimated extra cost:             ~%.1f s" % est)
+    print("Calibration:                      chunk 8192, DS4-0731 on 2x DGX Spark")
+    print("WARNING: the time estimate is configuration-dependent and UNCALIBRATED")
+    print("         for other runtime profiles. Measured deviation up to 1.7x when")
+    print("         calibration came from a different MAX_NUM_BATCHED_TOKENS.")
+    print("         The cache figures above, by contrast, are deterministic.")
     pos = 100.0 * div / len(tb)
-    verdict = ("BRA — mutationen ligger sist, nastan hela cachen ateranvands" if pos > 90 else
-               "ILLA — mutationen ligger tidigt, nastan allt maste rakans om" if pos < 25 else
-               "MEDEL — mutationen ligger mitt i, halva kontexten forloras")
-    print("\nMutationens position:      %.1f %% in i prompten\n%s" % (pos, verdict))
+    verdict = ("GOOD — the mutation sits at the end, nearly the whole cache is reused" if pos > 90 else
+               "BAD — the mutation sits early, nearly everything must be recomputed" if pos < 25 else
+               "MEDIUM — the mutation sits mid-prompt, half the context is lost")
+    print("\nMutation position:         %.1f %% into the prompt\n%s" % (pos, verdict))
     sd = structure_diff(A, B)
     if sd:
-        print("\n--- STRUKTURLAGE: trolig orsak ---")
+        print("\n--- STRUCTURE MODE: likely cause ---")
         for s in sd:
             print("  " + s)
-    print("\nRegel: statiskt forst (systemprompt, verktyg, stabil historik),")
-    print("       dynamiskt sist (tidsstamplar, status, nya verktygsresultat).")
+    print("\nRule: static first (system prompt, tools, stable history),")
+    print("       dynamic last (timestamps, status, fresh tool results).")
 
 
 main()

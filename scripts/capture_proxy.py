@@ -1,37 +1,38 @@
 #!/usr/bin/env python3
-"""Fangstproxy — sparar den EXAKTA payload en agentklient skickar.
+"""Capture proxy — records the EXACT payload an agent client sends.
 
-Varfor: att jamfora en klients interna meddelandeobjekt racker inte. Det ar
-serialiseringen som avgor prefix-cachen — nyckelordning, whitespace, verktygens
-ordning, metadata som ramverket lagger pa sist. Bara det som gar over tradet raknas.
+Why: comparing a client's internal message objects is not enough. Serialization
+is what determines the prefix cache — key order, whitespace, tool ordering,
+metadata the framework appends last. Only what goes over the wire counts.
 
-Anvandning:
-    python3 capture_proxy.py                    # lyssnar 8899 -> 127.0.0.1:8888
-    python3 capture_proxy.py 8899 8000 ./fangst # egen port, uppstrom och katalog
+Usage:
+    python3 capture_proxy.py                      # listens 8899 -> 127.0.0.1:8888
+    python3 capture_proxy.py 8899 8000 ./captures # custom port, upstream and dir
 
-Peka sedan agentramverket pa http://<host>:8899/v1 i stallet for :8888.
-Varje request sparas som fangst/NNNN-<endpoint>.json, i ordning.
+Then point the agent framework at http://<host>:8899/v1 instead of :8888.
+Each request is saved as captures/NNNN-<endpoint>.json, in order.
 
-!! RA FANGSTER KAN INNEHALLA KOD, TOKENS, FILVAGAR OCH HEMLIGHETER.
-   fangst/ ar gitignorerad. Halla originalen utanfor versionskontroll och dela
-   dem inte. Kor analysen med REDACT=1 sa innehallssnuttar aldrig skrivs ut:
-       REDACT=1 python3 prompt_locality.py fangst/0006-chat.json fangst/0007-chat.json
+!! RAW CAPTURES MAY CONTAIN CODE, TOKENS, FILE PATHS AND SECRETS.
+   captures/ is gitignored. Keep originals out of version control and do not
+   share them. Run the analysis with REDACT=1 so content snippets are never
+   printed:
+       REDACT=1 python3 prompt_locality.py captures/0006-chat.json captures/0007-chat.json
 
-Efterat:
-    python3 prompt_locality.py fangst/0006-chat.json fangst/0007-chat.json
+Afterwards:
+    python3 prompt_locality.py captures/0006-chat.json captures/0007-chat.json
 
-Proxyn ar avsiktligt dum: den andrar ingenting, buffrar hela kroppen och
-vidarebefordrar. Anvand den for matning, inte i produktion.
+The proxy is deliberately dumb: it changes nothing, buffers the whole body and
+forwards it. Use it for measurement, not in production.
 """
 import json, os, sys, urllib.request, urllib.error
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LISTEN = int(sys.argv[1]) if len(sys.argv) > 1 else 8899
 UPSTREAM = int(sys.argv[2]) if len(sys.argv) > 2 else 8888
-OUTDIR = sys.argv[3] if len(sys.argv) > 3 else "fangst"
-os.umask(0o077)          # filer och kataloger skapas utan grupp/varldsrattigheter fran borjan
+OUTDIR = sys.argv[3] if len(sys.argv) > 3 else "captures"
+os.umask(0o077)          # files and dirs are created without group/world permissions
 os.makedirs(OUTDIR, exist_ok=True)
-os.chmod(OUTDIR, 0o700)  # aven om katalogen redan fanns
+os.chmod(OUTDIR, 0o700)  # even if the directory already existed
 _n = [0]
 
 
@@ -76,7 +77,7 @@ class H(BaseHTTPRequestHandler):
         tag = self.path.rstrip("/").split("/")[-1] or "req"
         path = os.path.join(OUTDIR, "%04d-%s.json" % (_n[0], tag))
         try:
-            # spara exakt som skickat, bara indenterat for lasbarhet
+            # save exactly as sent, only indented for readability
             open(path, "wb").write(json.dumps(json.loads(body), ensure_ascii=False,
                                               indent=1).encode("utf-8"))
         except Exception:
@@ -85,7 +86,7 @@ class H(BaseHTTPRequestHandler):
         d = "?"
         try:
             o = json.loads(body)
-            d = "%d meddelanden, %d verktyg, ~%d tecken" % (
+            d = "%d messages, %d tools, ~%d chars" % (
                 len(o.get("messages", [])), len(o.get("tools", [])), len(body))
         except Exception:
             d = "%d bytes" % len(body)
@@ -96,7 +97,7 @@ class H(BaseHTTPRequestHandler):
         self._pass()
 
 
-print("fangstproxy: 0.0.0.0:%d  ->  127.0.0.1:%d" % (LISTEN, UPSTREAM))
-print("sparar till: %s/" % OUTDIR)
-print("peka klienten pa http://<host>:%d/v1 och kor din uppgift.\n" % LISTEN)
+print("capture proxy: 0.0.0.0:%d  ->  127.0.0.1:%d" % (LISTEN, UPSTREAM))
+print("saving to: %s/" % OUTDIR)
+print("point the client at http://<host>:%d/v1 and run your task.\n" % LISTEN)
 ThreadingHTTPServer(("0.0.0.0", LISTEN), H).serve_forever()

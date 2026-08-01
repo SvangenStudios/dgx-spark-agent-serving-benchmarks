@@ -1,24 +1,28 @@
-Plattform:   NVIDIA DGX Spark (GB10 Grace-Blackwell), sm_121
-Antal noder: 2 (TP=2, PP=1)
-Minne:       128 GB unified LPDDR5X per nod (~119,6 GiB tillgängligt)
-             CPU och GPU delar samma pool — ingen separat VRAM
-Länk:        RoCE, direktkopplad, MTU 9000
-             OBS: portmappningen var asymmetrisk (nod 1 port 1 <-> nod 2 port 0)
-OS:          Ubuntu 24.04, kernel 6.17-nvidia, driver 580.x, CUDA 13
+Platform:     NVIDIA DGX Spark (GB10 Grace-Blackwell), sm_121
+Nodes:        2 (TP=2, PP=1)
+Memory:       128 GB unified LPDDR5X per node (~119.6 GiB usable)
+              CPU and GPU share the same pool — there is no separate VRAM
+Link:         RoCE, direct-attached, MTU 9000
+              NOTE: port mapping was asymmetric (node 1 port 1 <-> node 2 port 0)
+OS:           Ubuntu 24.04, kernel 6.17-nvidia, driver 580.x, CUDA 13
 
-Modell:      deepseek-ai/DeepSeek-V4-Flash-0731
-Revision:    7872f01b1d1fe23eabc4c98b48bffcef5a386062
-Storlek:     156 GB, 48 safetensors (~77,7 GiB per nod vid TP=2)
-Kvantisering: deepseek_v4_fp8 (FP8-vikter, FP4-experter)
+Model:        deepseek-ai/DeepSeek-V4-Flash-0731
+Revision:     7872f01b1d1fe23eabc4c98b48bffcef5a386062
+Size:         156 GB, 48 safetensors (~77.7 GiB per node at TP=2)
+Quantization: deepseek_v4_fp8 (FP8 weights, FP4 experts)
 
-Runtime:     vllm-dspark-runtime:dspark-nvfp4-stage-c
-vLLM:        0.21.1rc1.dev339+g1967a5627bc3
-Basimage:    ghcr.io/bjk110/vllm-spark@sha256:d8492e7677cf1b9aaa3344e0e6865efc
-             468454013eee5ebabac85be90af027be
-Recept:      tonyd2wild/DeepSeek-v4-Flash-0731-DSpark-1M-NVFP4-KV-2x-DGX-Spark @ d728faee
-Patch 4:     redan inbakad i receptets overlay (2026-07-31)
-             dspark.py sha256 = 4c11f54f7e74d658d40d4ec091f2b9911efd41ebde9f894f87102bcd3d3caba3
+Runtime:      vllm-dspark-runtime:dspark-nvfp4-stage-c
+vLLM:         0.21.1rc1.dev339+g1967a5627bc3
+Base image:   ghcr.io/bjk110/vllm-spark@sha256:d8492e7677cf1b9aaa3344e0e6865efc
+              468454013eee5ebabac85be90af027be
+Recipe:       tonyd2wild/DeepSeek-v4-Flash-0731-DSpark-1M-NVFP4-KV-2x-DGX-Spark @ d728faee
+Patch 4:      already baked into the recipe overlay (2026-07-31)
+              dspark.py sha256 = 4c11f54f7e74d658d40d4ec091f2b9911efd41ebde9f894f87102bcd3d3caba3
 
-KV:          nvfp4_ds_mla, block-size 256
-Spekulation: DSpark, k=5 statisk, draft_sample_method=probabilistic
-Backend:     B12X Mxfp4 MoE, PYNCCL all-reduce
+KV:           nvfp4_ds_mla, block-size 256
+Speculation:  DSpark, k=5 static, draft_sample_method=probabilistic
+Backend:      B12X Mxfp4 MoE, PYNCCL all-reduce
+
+Secondary stack (replication + UMA finding):
+Model:        poolside/Laguna-S-2.1-NVFP4 (67 GB) + DFlash drafter (2.1 GB)
+Runtime:      vLLM 0.25.1 upstream, single node, FLASHINFER_CUTLASS NvFp4 MoE

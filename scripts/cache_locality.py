@@ -1,16 +1,19 @@
-"""Prefix Cache Locality — vad kostar en muterande token, beroende pa VAR den star?
+"""Prefix Cache Locality — what does a mutating token cost, depending on WHERE it sits?
 
-Simulerar en agentloop: samma kontext skickas om och om igen, vaxande med ~200 tok
-per varv. Fyra varianter skiljer sig bara i VAR ett muterande falt ligger.
+Simulates an agent loop: the same context is sent repeatedly, growing ~200 tokens
+per turn. Four variants differ only in WHERE a mutating field is placed.
 
-  clean        inget muterar               -> cachen traffar fullt
-  dirty-bottom muterar sist i prompten     -> bara svansen rakans om
-  dirty-middle muterar mitt i              -> halva kontexten rakans om
-  dirty-top    muterar overst              -> ALLT rakans om, varje varv
+  clean         nothing mutates             -> cache hits fully
+  dirty-bottom  mutates at the end          -> only the tail is recomputed
+  dirty-middle  mutates mid-prompt          -> half the context is recomputed
+  dirty-top     mutates at the top          -> EVERYTHING is recomputed, every turn
 
-TTFT ar mattet: den ar proportionell mot hur mycket som maste prefillas pa nytt.
-vLLM cachar i block om 256 tokens (--block-size 256), sa invalideringen sker
-fran och med det block dar mutationen ligger.
+TTFT is the metric: it is proportional to how much must be re-prefilled.
+vLLM caches in blocks (--block-size, 256 here), so invalidation starts at the
+block containing the mutation.
+
+Env: MODEL, PORT, MULT (size of the static context; lower it if the model's
+context window is small — tokenizers differ, the same text can exceed the cap).
 """
 import json, time, urllib.request
 
@@ -18,8 +21,8 @@ import os
 PORT = os.environ.get("PORT", "8888")
 MODEL = os.environ.get("MODEL", "deepseek-v4-flash-0731")
 U = "http://127.0.0.1:%s/v1/chat/completions" % PORT
-BLOCK = ("Historikpost: agenten laste filen och noterade att konfigurationen ser korrekt ut. "
-         "Inga avvikelser rapporterade. Verktyget returnerade status noll. ")
+BLOCK = ("History entry: the agent read the file and noted the configuration looks correct. "
+         "No deviations reported. The tool returned exit status zero. ")
 TURNS = 8
 
 
@@ -43,27 +46,27 @@ def ttft(prompt):
 
 
 def build(variant, turn, salt):
-    """~20K tokens statisk bas + vaxande historik."""
-    static = "SYSTEMINSTRUKTION: du ar en driftassistent. " + BLOCK * 700   # ~20K tok
+    """~20K tokens static base + growing history."""
+    static = "SYSTEM INSTRUCTION: you are an operations assistant. " + BLOCK * 700   # ~20K tok
     hist = BLOCK * (turn * 12)                                              # +~200 tok/varv
-    mut = "AKTUELL TID: 2026-08-01 %02d:%02d:%02d. " % (22, turn, salt % 60)
+    mut = "CURRENT TIME: 2026-08-01 %02d:%02d:%02d. " % (22, turn, salt % 60)
     if variant == "clean":
-        return static + hist + "\n\nSvara med ordet OK."
+        return static + hist + "\n\nReply with the word OK."
     if variant == "dirty-top":
-        return mut + static + hist + "\n\nSvara med ordet OK."
+        return mut + static + hist + "\n\nReply with the word OK."
     if variant == "dirty-middle":
         half = len(static) // 2
-        return static[:half] + mut + static[half:] + hist + "\n\nSvara med ordet OK."
-    return static + hist + mut + "\n\nSvara med ordet OK."          # dirty-bottom
+        return static[:half] + mut + static[half:] + hist + "\n\nReply with the word OK."
+    return static + hist + mut + "\n\nReply with the word OK."          # dirty-bottom
 
 
 print("modell: %s  port: %s" % (MODEL, PORT), flush=True)
-print("varmer upp cachen...", flush=True)
+print("warming the cache...", flush=True)
 for v in ("clean", "dirty-top", "dirty-middle", "dirty-bottom"):
     build(v, 0, 0)
 ttft(build("clean", 0, 0))
 
-print("\nvariant         varv-1 TTFT   varv 2-8 median   snitt 2-8   vs clean", flush=True)
+print("\nvariant         turn-1 TTFT   turns 2-8 median   mean 2-8   vs clean", flush=True)
 base = None
 for v in ("clean", "dirty-bottom", "dirty-middle", "dirty-top"):
     ts = []

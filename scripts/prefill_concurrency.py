@@ -1,11 +1,15 @@
-"""Rent samtidighetstest UTAN jatteprefill.
+"""Pure concurrency test WITHOUT a giant prefill.
 
-Fragan: ger den storre KV-poolen (2,67M) faktisk hogre praktisk samtidighet,
-eller hindrar schemalaggaren oss fran att anvanda den?
+Question: does a larger KV pool actually buy practical concurrency, or does
+the scheduler prevent us from using it?
 
-Kor N parallella sessioner med normal agentkontext (~32K) och mater
-per-strom decode + aggregat. Om aggregatet skalar med N fungerar samtidighet.
-Om per-strom faller proportionellt ar vi serialiserade.
+Runs N parallel sessions with normal agent context (~32K) and measures
+per-stream decode + aggregate. If the aggregate scales with N, concurrency
+works. If per-stream falls proportionally, we are serialized.
+
+Note: with a 32K prompt and ~150 generated tokens this workload is
+PREFILL-dominated — it measures prefill concurrency, not decode concurrency.
+Use decode_concurrency.py for the latter.
 """
 import json, time, urllib.request, threading
 
@@ -18,7 +22,7 @@ def ctx(n_tokens, salt):
     chunk = FILL * 8
     per = int(len(chunk) / 3.6)
     n = max(4, n_tokens // per)
-    return ("Session " + salt + ". ") + chunk * n + "\n\nSkriv en kort sammanfattning i fem meningar."
+    return ("Session " + salt + ". ") + chunk * n + "\n\nWrite a short five-sentence summary."
 
 
 def run(salt, out, n_ctx):
@@ -36,12 +40,12 @@ def run(salt, out, n_ctx):
 
 
 # uppvarmning
-print("varmer upp...", flush=True)
+print("warming up...", flush=True)
 for i in range(2):
     run("warm%d" % i, [], 8000)
 
 CTX = 32000
-print("\nsamtidighet   per-strom decode   aggregat   varsta latens   prompt_tok", flush=True)
+print("\nconcurrency   per-stream e2e     aggregate  worst latency   prompt_tok", flush=True)
 for N in (1, 2, 4, 6):
     res = []
     ths = [threading.Thread(target=run, args=("c%d-%d" % (N, i), res, CTX)) for i in range(N)]
@@ -53,7 +57,7 @@ for N in (1, 2, 4, 6):
     wall = time.time() - t0
     ok = [r for r in res if r[0] != "FEL"]
     if not ok:
-        print("%6d        ALLA MISSLYCKADES: %s" % (N, res[0][1]), flush=True)
+        print("%6d        ALL FAILED: %s" % (N, res[0][1]), flush=True)
         continue
     per = sum(r[0] / r[2] for r in ok) / len(ok)
     agg = sum(r[0] for r in ok) / wall

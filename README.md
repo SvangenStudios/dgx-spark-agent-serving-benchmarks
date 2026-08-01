@@ -125,6 +125,6 @@ the experiment that would settle each open point.
 ## Pending before v1.0
 
 - [x] Real agent workload capture (Hermes) — done, see results §10
-- [ ] English translation of all script output strings
+- [x] English translation of all script output strings and documents
 - [ ] 262K + `drop_caches` causality test for #48140
-- [ ] Minimal reproduction for the scheduling deviation → issue in the DSpark recipe repo
+- [x] Minimal reproduction for the scheduling deviation — see `repro/` (issue filing pending)
