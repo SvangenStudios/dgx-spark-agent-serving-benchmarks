@@ -5,6 +5,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history: the scans below cover every commit, not just the tip.
+          # An extension-filtered, working-tree-only scan is how a full name in
+          # LICENSE and AI session URLs in commit messages passed green CI.
+          fetch-depth: 0
       - name: Syntax check all scripts
         run: python3 -m py_compile scripts/*.py
       - name: Install test dependencies
@@ -13,12 +18,31 @@ jobs:
         # These encode the four instrument faults found on 2026-08-02. A written
         # measurement rule is not a guard; these are.
         run: python3 -m pytest tests/ -q
-      - name: Secrets and address scan
+
+      - name: Secrets and address scan — every tracked file, no extension filter
         run: |
-          # Fail if anything resembling private addresses, tokens, usernames
-          # or e-mail addresses reappears in a future commit.
-          ! grep -rnE \
-            '100\.(6[4-9]|[7-9][0-9]|1[0-1][0-9]|12[0-7])\.[0-9]+\.[0-9]+|192\.168\.[0-9]+\.[0-9]+|10\.[0-9]+\.[0-9]+\.[0-9]+|hf_[A-Za-z0-9]{16,}|sk-[A-Za-z0-9]{20,}|ghp_[A-Za-z0-9]{20,}|BEGIN (RSA|OPENSSH|EC) PRIVATE|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.(se|com|org|net)' \
-            --include='*.py' --include='*.md' --include='*.env' --include='*.txt' --include='*.yml' \
-            --include='*.log' . \
-            || { echo '::error::Potential secret, private address or e-mail found'; exit 1; }
+          set -o pipefail
+          PATTERN='100\.(6[4-9]|[7-9][0-9]|1[0-1][0-9]|12[0-7])\.[0-9]+\.[0-9]+|192\.168\.[0-9]+\.[0-9]+|10\.[0-9]+\.[0-9]+\.[0-9]+|hf_[A-Za-z0-9]{16,}|sk-[A-Za-z0-9]{20,}|ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|BEGIN (RSA|OPENSSH|EC|DSA|PGP) PRIVATE|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.(se|com|org|net|io|dev)'
+          # Every tracked file regardless of extension — LICENSE, Dockerfile,
+          # Makefile, *.json, *.sh and anything added later are all covered.
+          if git ls-files -z | xargs -0 grep -nHE "$PATTERN" ; then
+            echo '::error::Potential secret, private address or e-mail found in a tracked file'
+            exit 1
+          fi
+
+      - name: History scan — content of every commit ever made
+        run: |
+          PATTERN='hf_[A-Za-z0-9]{16,}|sk-[A-Za-z0-9]{20,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|BEGIN (RSA|OPENSSH|EC|DSA|PGP) PRIVATE|100\.(6[4-9]|[7-9][0-9]|1[0-1][0-9]|12[0-7])\.[0-9]+\.[0-9]+|192\.168\.[0-9]+\.[0-9]+'
+          # A secret removed in a later commit is still public in the history.
+          if git log -p --all --no-color | grep -E "^\+.*($PATTERN)" ; then
+            echo '::error::Potential secret or private address found in git history'
+            exit 1
+          fi
+
+      - name: Commit-message scan — AI session identifiers and personal metadata
+        run: |
+          # Commit messages are published too, and no file-based scan sees them.
+          if git log --all --format='%B' | grep -nE 'Claude-Session:|claude\.ai/code/session_|chatgpt\.com/(c|share)/' ; then
+            echo '::error::Public AI session identifier found in a commit message'
+            exit 1
+          fi
