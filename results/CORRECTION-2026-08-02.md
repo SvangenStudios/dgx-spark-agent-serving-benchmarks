@@ -80,24 +80,63 @@ The three faults do not point the same way:
 | Fault | Effect on the reported 7.1% |
 |---|---|
 | events counted instead of tokens (×2.5) | understated |
-| cold reference including TTFT (÷1.2) | overstated |
+| cold reference including TTFT (÷1.65) | overstated |
 | no prefill window (undisturbed decode included) | overstated, factor unknown |
 
-A corrected value is expected in the **~8–15%** range, but the point of this notice is that
-**the number is not known** until re-measured. It remains well below the 25% threshold the
-test used for a pass, so the qualitative finding — decode is severely starved during long
-prefill — is not in question. The exact percentage is.
+We estimated the corrected value would land in the **~8–15%** range. It landed at **5.0%**
+on 2048 and **1.7%** on 8192 — outside the estimate, in the direction that makes the finding
+stronger rather than weaker. The third fault dominated: the unbounded window mixed the
+undisturbed head and tail of a 600-token stream into a measurement of a 179-second prefill.
 
-## What must be treated as under revalidation
+That estimate is kept here rather than deleted. It is the point of the exercise: with three
+faults of opposing sign, the corrected number could not be reasoned out, only measured.
 
-- The decode-share values **7.1% and 7.3%**.
-- **The comparison between them.** Our first instinct was that both runs carried the same
-  bias, so the comparison survived even if the absolutes did not. That does not hold:
-  tokens per SSE chunk may differ between chunk sizes, the unbounded window diluted each
-  run by a different amount, and the two reference calls were cold to different degrees.
-  The supporting argument ("~9 tokens per chunk at 8192 vs ~2.3 at 2048") is stated in
-  absolute terms and is not yet token-weighted either.
-- The derived statement that decode is throttled to **~1/35 of normal speed**.
+## Re-measured: the A/B, and an overturned conclusion
+
+The full A/B was re-run on 2026-08-02 with the repaired instrument — three repetitions per
+profile, plus three more for 2048 after a server restart to rule out warm-up effects.
+
+| | published | corrected |
+|---|---|---|
+| Decode share during prefill, 8192 | 7.1% | **1.7%** (1.6 / 1.7 / 1.8) |
+| Decode share during prefill, 2048 | 7.3% | **5.0%** (4.5 / 4.8 / 5.0 / 5.0 / 5.1 / 5.2) |
+| Prefill cost of 2048 | −3.9% | **−7.7%** (1,462 vs 1,584 tok/s) |
+| p95 output-chunk gap, 8192 → 2048 | 5.20 → 1.59 s | 6.10 → 1.64 s |
+| Decode throttled to | "~1/35 of normal" | 1/59 (8192), 1/20 (2048) |
+
+**The headline conclusion is overturned.** We published that decode share is invariant to
+chunk size — "chunk size is a jitter lever, not a fairness lever". It is not invariant:
+**2048 delivers 2.9× the decode share and 3.1× the decode tokens** of 8192 during the same
+prefill. The fairness benefit we measured as zero is in fact the largest single effect of
+the setting.
+
+The reasoning that produced the wrong conclusion was: "at 8192 decode fits ~9 tokens per
+chunk, at 2048 ~2.3 — four times more opportunities, four times fewer tokens each, net
+zero." Half right. Decode does get one scheduling opportunity per chunk. But the step
+yields ~`k` accepted speculative tokens regardless of chunk size — measured 3.3 per chunk
+at 8192 and 2.6 at 2048, not 9 and 2.3 — so total decode scales with the *number* of
+chunks, not their size.
+
+Note the direction: the corrected decode shares are **lower** than published, i.e. the
+starvation is worse than we reported, and the corrected prefill cost of the 2048 profile is
+**higher**. The correction makes both sides of the trade-off sharper, and still favours
+2048 for agent workloads.
+
+Three faults with opposing signs is why no corrected number could be reasoned out in
+advance. Our own written estimate before measuring was "~8–15%"; the answer was 5.0%.
+
+### What was verified as unchanged
+
+- Undisturbed decode baselines were 36.3–39.0 tok/s in **both** profiles — the precondition
+  for the comparison to mean anything.
+- The 2048 profile reproduces across a server restart (4.8 / 5.0 / 5.0 warm vs
+  4.5 / 5.1 / 5.2 after restart), so uptime and cache warmth do not confound it.
+- KV pool re-read from the restarted server's own startup accounting: 2,669,829 tokens
+  against 2,671,557 published, 0.06% apart. The 8192 KV figure was not re-verified — that
+  container no longer exists.
+- Admission blocking: 145.4 s (8192) and 159.2 s (2048) against a 1.66 s warm baseline,
+  released only on prefill completion. Chunk size does not fix admission; the difference
+  between the profiles is just how long the prefill takes.
 
 ## What has already been re-measured: the agent captures (§9)
 

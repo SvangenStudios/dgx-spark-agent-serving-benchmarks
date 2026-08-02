@@ -1,116 +1,125 @@
 # Reply to post in the NVIDIA DGX Spark forum thread
 
 Paste the block below as a reply. Keep the original post as it is — nothing needs to be
-deleted or edited.
+deleted. If the forum allows editing, add a one-line bold pointer at the top of the original
+post linking to this reply and to `results/CORRECTION-2026-08-02.md` in the repository.
 
 ---
 
-**Measurement correction — decode-share figures under revalidation**
+**Correction: my decode-share numbers were wrong, and one of my conclusions was too**
 
-Following up on my own post: I re-reviewed the overlap script and found three faults in how
-the decode share during prefill was measured. The reported values of **7.1% and 7.3% are
-invalid** and I am re-measuring them.
+Following up on my own post. I re-reviewed the overlap script, found three faults in how it
+measured decode share during prefill, repaired it, and re-ran the full A/B. One published
+conclusion does not survive.
 
-**1. SSE events were counted as tokens.** The script timestamped each streamed chunk with
+**What was wrong with the instrument**
+
+*1. SSE events were counted as tokens.* The script timestamped each streamed chunk with
 non-empty content and computed `1 / mean(gap)` — an *event* rate — then divided it by a
 *token* rate. On this speculative-decoding stack one chunk carries several accepted tokens.
-Measured on the same server, 300 generated tokens arrived in 118 chunks:
+Measured on the same server, 300 tokens arrived in 118 chunks:
 
 ```
 tokens per chunk: {1: 31, 2: 36, 3: 25, 4: 14, 5: 6, 6: 6}
 mean: 2.50 tokens per non-empty chunk
 ```
 
-**2. There was no prefill window.** The line meant to select the intervals during the
-prefill was `during = [g for g in gaps]` — a no-op copy of the entire stream, including the
-5 s before the long request was submitted and everything after the prefill had finished.
+*2. There was no prefill window.* The line meant to select intervals during the prefill was
+`during = [g for g in gaps]` — a no-op copy of the entire stream, including output before
+the long request was submitted and after its prefill had finished. This turned out to be the
+dominant error: it mixed the undisturbed head and tail of a 600-token stream into a
+measurement of a 179-second prefill.
 
-**3. The reference was cold and included TTFT.** It was the first request the script issued,
-measured as `completion_tokens ÷ total_request_time`. On the same server:
+*3. The reference was cold and included TTFT.* It was the first request the script issued.
+Warm, first-token-to-last-token, decode reads 21.3 tok/s where the old method read 17.1.
+
+**The corrected numbers**
+
+Three repetitions per profile, plus three more for 2048 after a server restart to rule out
+warm-up effects. Each stream is now its own baseline — measured undisturbed for 25 s before
+the prefill is submitted — and tokens are counted from streamed `token_ids`, cross-checked
+against the server's `usage.completion_tokens`.
+
+| | published | corrected |
+|---|---|---|
+| Decode share during prefill, 8192 | 7.1% | **1.7%** (1.6 / 1.7 / 1.8) |
+| Decode share during prefill, 2048 | 7.3% | **5.0%** (4.5 / 4.8 / 5.0 / 5.0 / 5.1 / 5.2) |
+| Prefill cost of 2048 | −3.9% | **−7.7%** (1,462 vs 1,584 tok/s) |
+| p95 output-chunk gap, 8192 → 2048 | 5.20 → 1.59 s | 6.10 → 1.64 s |
+
+**The conclusion that does not survive.** I published that decode share is invariant to
+chunk size, and concluded "chunk size is a jitter lever, not a fairness lever". That is
+wrong. **2048 delivers 2.9× the decode share and 3.1× the decode tokens** of 8192 during the
+same prefill. The fairness benefit I measured as zero is in fact the largest single effect
+of the setting.
+
+My reasoning at the time was: "at 8192 decode fits ~9 tokens per chunk, at 2048 ~2.3 — four
+times more opportunities, four times fewer tokens each, net zero." Half of that was right.
+Decode does get one scheduling opportunity per prefill chunk. But the step yields ~`k`
+accepted speculative tokens **regardless of chunk size** — measured 3.3 per chunk at 8192
+and 2.6 at 2048, not 9 and 2.3. So total decode scales with the *number* of chunks:
 
 ```
-cold, total time incl. TTFT (the method used):  17.1 tok/s
-warm, total time incl. TTFT:                    20.9 tok/s
-warm, first token -> last token (pure decode):  21.3 tok/s
+decode_tokens ≈ (prefill_tokens / chunk_size) × accepted_tokens_per_step
 ```
 
-TTFT explains only ~1.9% of that. The rest is GPU clock ramp on a cold GB10.
+For the 262K prompt that is 32 chunks at 8192 against 128 at 2048. The model predicts 4×;
+measured 3.1×, the shortfall explained by the higher per-step yield at the larger chunk.
+This is falsifiable — it predicts decode share roughly proportional to `1/chunk_size` until
+the per-step yield saturates at `k`.
 
-These faults do not all point the same way — event-counting understates, the cold reference
-and the missing window overstate — so I am not publishing a corrected number until it is
-measured. It will remain far below the 25% threshold I used for a pass, so the qualitative
-finding (decode is severely starved during long prefill) is not in question. The exact
-percentage is.
+Practical upshot for anyone running agents on this stack: `--max-num-batched-tokens 2048`
+costs about 7.7% prefill throughput, nearly double what I first reported, and buys a 67%
+larger KV pool, 73% less output jitter, **and** roughly 3× the decode throughput while a
+long prefill is running. It is a better trade than my original write-up implied.
 
-**The comparison between the two chunk sizes is also withdrawn**, not just the absolute
-values. My first instinct was that both runs carried the same bias so the comparison
-survived. That does not hold: tokens per SSE chunk may differ between chunk sizes, the
-unbounded window diluted each run by a different amount, and the two reference calls were
-cold to different degrees.
+Worth noting the direction of the correction: the corrected decode shares are *lower* than
+published — the starvation is worse than I reported — and the corrected prefill cost is
+*higher*. Both sides of the trade-off got sharper.
 
-The irony is not lost on me: my own measurement-discipline list said streamed output on this
-build represents speculative decode *steps* rather than accepted tokens — and this script
-did it anyway. A written rule is not a guard; a regression test is.
+**Unaffected**
+
+- KV pool +67% (2,669,829 tokens on 2048, re-read from the restarted server's own startup
+  accounting; 2,671,557 published, 0.06% apart)
+- Admission delay: new short requests waited 145–159 s against a 1.66 s warm baseline,
+  released only when the prefill completed — in **both** profiles. Chunk size does not fix
+  admission; the difference between profiles is just how long the prefill takes.
+- Long-context retrieval 12/12 at 32K/128K/512K/900K
+- The GB10 UMA results and the #48140 reproduction
+- The synthetic prefix-cache locality experiments on both stacks — plain-text prompts with
+  no tools, so the chat-template fault below does not apply
 
 **Also corrected: the agent-capture cache reuse.** That analysis did not apply the server's
 chat template, and those bodies carry 20 tool definitions — the template expands one tool
-definition to ~266 tokens where my flattening produced ~21. I have now re-measured the
-saved captures against the real template:
+definition to ~266 tokens where my flattening produced ~21. Re-measured against the real
+template, reuse is **95.7 / 98.4 / 98.1%**, not 97–99%. I had predicted these could only
+move *up*; wrong for the first transition, because my flattening also dropped serialized
+assistant tool_calls, which sit in the appended tail being re-prefilled. The append-only
+conclusion is unchanged and better supported: first divergence lands on the last token of
+the previous prompt in every transition.
 
-| Transition | Published | Corrected |
-|---|---|---|
-| turn 1→2 | 97.1% | 95.7% |
-| turn 5→6 | 98.7% | 98.4% |
-| turn 9→10 | 97.5% | 98.1% |
+**What changed in the instrument**
 
-So the headline is **95.7–98.4%**, not 97–99%. Worth noting that I predicted these could
-only move *up* — divergence sits at the last token, and reuse grows with prompt length. I
-was wrong for turn 1→2: my flattening also dropped serialized `assistant` tool_calls, and
-those sit in the appended tail being re-prefilled, which outweighed the longer prefix. The
-append-only conclusion is unchanged and now better supported: the first divergence lands on
-the last token of the previous prompt in every transition.
-
-**Unaffected — measured without the event/token ratio:**
-
-- KV pool +67% (1,598,763 → 2,671,557 tokens), from the runtime's own startup accounting
-- visible output-chunk p95 gap 5.20 s → 1.59 s (−69%). The observed gaps closely tracked
-  `chunk_size ÷ effective_prefill_rate` (predicted 5.36 s / 1.39 s) — wall-clock timing
-- prefill throughput −3.9% (1,529 → 1,469 tok/s), from `usage.prompt_tokens`
-- admission delay: new short requests at 367 s against a 1.66 s warm baseline, released only
-  when the prefill completed
-- prefill vs decode concurrency scaling, computed from `usage` token counts
-- long-context retrieval 12/12 at 32K/128K/512K/900K
-- the GB10 UMA results and the #48140 reproduction
-- the synthetic prefix-cache locality experiments on both stacks — those send plain-text
-  prompts with no tools, so the chat-template fault does not apply
-
-**What I changed in the instrument:** streamed `return_token_ids: true` with a hard abort if
-the server returns null instead of a silent fallback; tokens counted even when
-`delta.content` is empty; the prefill window defined explicitly from submission of the long
-request to its first output token; a warm, streamed, token-weighted reference measured first
-token to last token; and token throughput reported separately from output-chunk jitter
-rather than conflated. Every measurement prompt is now salted, not just the large prefill —
-this build exposes no `/reset_prefix_cache` endpoint (404), so salting is the only reset
-short of a restart. Regression tests cover all of it, and there is a standalone
-`probe_token_ids.py` that answers "can this server's stream be counted?" with an exit code:
+Streamed `return_token_ids` with a hard abort when visible output carries no token_ids; every
+stream cross-checked against the server's own `usage.completion_tokens`; an explicit prefill
+window; each stream used as its own baseline; token throughput and output-chunk jitter
+reported as separate metrics; output-chunk gaps clipped to the window rather than filtered
+into it, so the stall that straddles the boundary is no longer discarded; all measurement
+prompts salted, since this build exposes no `/reset_prefix_cache` (404). 22 regression tests
+in CI, and a standalone `probe_token_ids.py` that answers "can this server's stream be
+counted?" with an exit code:
 
 ```
 non-empty content events : 95   <- what a naive stream counter would report
 tokens via token_ids     : 200
 usage.completion_tokens  : 200
-tokens per event         : 2.11
-VERDICT: token_ids reported and consistent with usage.
-         Counting SSE events would understate decode by 2.11x on this server.
+VERDICT: Counting SSE events would understate decode by 2.11x on this server.
 ```
 
-The strongest change is the smallest one: every stream is now cross-checked against the
-server's own `usage.completion_tokens`. An event count can never match that on a
-speculative stack, so the original bug would have been impossible to ship. A written
-measurement rule is not a guard; an assertion is.
+The strongest change is the smallest: an event count can never match the server's reported
+`completion_tokens` on a speculative stack, so the original bug is now impossible to ship. A
+written measurement rule is not a guard; an assertion is — I had the rule written down in my
+own repository and violated it in one script anyway.
 
-Filing the scheduling issue is on hold until the minimal reproduction runs on the repaired
-instrument. Corrected numbers and the updated scripts will go into v0.1.1 in the repo, and
-I will post them in this thread.
-
-Full write-up of exactly what is and is not affected:
-`results/CORRECTION-2026-08-02.md` in the repository.
+Everything is in the repository, including `results/CORRECTION-2026-08-02.md` which
+enumerates exactly what changed and what did not.

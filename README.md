@@ -12,22 +12,27 @@ behavior.
 > **95.7–98.4% prefix-cache reuse per turn**, with only ~270–660 tokens re-prefilled at
 > each step — the framework builds prompts append-only.
 
-> ### ⚠️ Measurement correction in progress (2026-08-02)
+> ### ⚠️ Corrected 2026-08-02 — one published conclusion overturned
 >
-> A follow-up review found three faults in `scripts/prefill_decode_overlap.py`: it counted
-> **SSE events as tokens** (this stack delivers ~2.5 accepted tokens per chunk), it never
-> restricted the measurement to the actual prefill window, and its reference was measured
-> **cold** and included TTFT. **The reported decode-share values of ~7.1% and ~7.3% are
-> invalid pending a token-weighted re-measurement**, and so is the comparison between the
-> two chunk sizes — the three faults did not necessarily bias both runs equally. A fourth
-> fault — `prompt_locality.py` not applying the server's chat template — has been fixed and
-> the agent captures re-analyzed: reuse is **95.7–98.4%**, not 97–99%.
+> The first version of `scripts/prefill_decode_overlap.py` counted **SSE events as tokens**
+> (this stack delivers ~2.1–2.5 accepted tokens per chunk), never restricted the measurement
+> to the actual prefill window, and took its reference from a **cold** server. The instrument
+> has been repaired and **both chunk profiles fully re-measured**, three repetitions each:
 >
-> KV pool +67%, the −69% output-chunk jitter reduction, prefill −3.9%, the admission-delay
-> results, retrieval 12/12 and the #48140 reproduction are **unaffected**.
+> | | published | corrected |
+> |---|---|---|
+> | Decode share during prefill, 8192 | 7.1% | **1.7%** |
+> | Decode share during prefill, 2048 | 7.3% | **5.0%** |
+> | Conclusion | "chunk size is not a fairness lever" | **overturned — 2048 gives 2.9× the decode share** |
+> | Prefill cost of 2048 | −3.9% | −7.7% |
 >
-> Full detail, including what is and is not touched:
-> [`results/CORRECTION-2026-08-02.md`](results/CORRECTION-2026-08-02.md).
+> A fourth fault — `prompt_locality.py` not applying the server's chat template — is also
+> fixed and the agent captures re-analyzed: reuse is **95.7–98.4%**, not 97–99%.
+>
+> KV pool +67%, the output-chunk jitter reduction, the admission-delay results, retrieval
+> 12/12 and the #48140 reproduction are unaffected.
+>
+> Full detail: [`results/CORRECTION-2026-08-02.md`](results/CORRECTION-2026-08-02.md).
 
 ---
 
@@ -58,15 +63,18 @@ behavior.
 **Our contribution:**
 
 1. **Quantified the `max_num_batched_tokens` 8192 → 2048 trade-off on 2× GB10** in one
-   controlled run: **+67% KV pool, −69% p95 output-chunk jitter, −3.9% prefill.** The
-   token-weighted decode-share comparison between the two chunk sizes is **under
-   revalidation** — see the correction notice above.
-2. **Documented a likely scheduling deviation:** vLLM's chunked-prefill design states that
-   pending decodes are prioritized before prefill; on this DSpark/speculative stack, decode
-   was severely starved during long prefill regardless of chunk size, and new requests
-   were admitted only after prefill completion (221× normal TTFT). A minimal reproduction is included in `repro/`. Issue filing is deferred
-   until the reproduction runs on the repaired instrument; upstream vLLM should only be
-   targeted if the behavior is reproduced without the DSpark patches.
+   controlled, token-weighted A/B: **+67% KV pool, −73% p95 output-chunk jitter, 2.9× the
+   decode share under concurrent prefill — for 7.7% prefill throughput.** Three repetitions
+   per profile, plus three more for 2048 after a server restart to rule out warm-up effects.
+2. **Documented a likely scheduling deviation, and its mechanism:** vLLM's chunked-prefill
+   design states pending decodes are prioritized before prefill; on this DSpark/speculative
+   stack decode receives **one speculative step per prefill chunk**, yielding ~3 accepted
+   tokens regardless of chunk size — on the order of 0.1–0.2% of the token budget. Because
+   the yield does not scale with chunk size, decode throughput scales with the *number* of
+   chunks, which is why 2048 beats 8192 by 2.9×. New requests are admitted only after
+   prefill completion (221× normal TTFT) in both profiles. Minimal reproduction in
+   `repro/`; upstream vLLM should only be targeted if the behavior reproduces without the
+   DSpark patches.
 3. **Measured prefill scaling, decode scaling and admission separately** on the same
    configuration: prefill aggregate flat from N=1→6 (serialized); Swedish-prose decode aggregate
    increased 107% by N=4 (N=6 added only 9% more while maximum TTFT rose sharply); code
@@ -105,9 +113,10 @@ Full details: [`results/system-info.txt`](results/system-info.txt).
 
 See [`results/RESULTS.md`](results/RESULTS.md). Highlights:
 
-- **Chunk size is a jitter and KV-capacity lever.** Output-chunk gaps under prefill closely
-  tracked `chunk_size ÷ effective_prefill_rate`. Whether it is also a *fairness* lever is
-  under revalidation.
+- **Chunk size is a jitter, capacity *and* fairness lever.** Output-chunk gaps under prefill
+  closely tracked `chunk_size ÷ effective_prefill_rate`; 2048 also delivers 3.1× more decode
+  tokens during the same prefill than 8192. Our first write-up concluded fairness was
+  unaffected — that was a measurement artifact.
 - **The 1M serving configuration boots successfully; retrieval quality was verified at
   32K, 128K, 512K and 900K with 12/12 needles recovered and no distractor hits.** It is
   batch capacity, not an interactive mode — a 900K prefill takes ~15 minutes and starves
@@ -165,6 +174,7 @@ the experiment that would settle each open point.
 
 - [x] Real agent workload capture (Hermes) — done, see results §9
 - [x] English translation of all script output strings and documents
+- [x] Token-weighted 8192/2048 A/B re-measurement — done, see results §4
 - [ ] 262K + `drop_caches` causality test for #48140
 - [ ] 72-hour soak on the final 2048 agent profile
 - [ ] File the scheduling issue against the patched DSpark stack

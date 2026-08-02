@@ -3,13 +3,13 @@
 All figures were measured within the same night on the same rig. Where a conclusion later
 turned out to be wrong, it is kept together with its correction — see §7.
 
-> **⚠️ 2026-08-02: decode-share figures are under revalidation.** The overlap instrument
-> counted SSE events as tokens (~2.1–2.5 tokens per chunk on this stack), used no prefill
-> window, and took its reference from a cold server. The values **7.1% / 7.3%** in §4 — and
-> the comparison between them — plus the **~1/35 of normal speed** statement in §3 are
-> flagged below. The **§9 agent-capture figures have been re-measured** with the server's
-> real chat template and are now correct (95.7–98.4%, revised down from 97–99%). Everything
-> else on this page is unaffected. Full analysis:
+> **⚠️ 2026-08-02: corrected after a measurement fault. Everything below is the corrected
+> version.** The original overlap instrument counted SSE events as tokens (~2.1–2.5 tokens
+> per chunk on this stack), used no prefill window, and took its reference from a cold
+> server. §4 has been **fully re-measured**: decode share is 1.7% (8192) vs 5.0% (2048),
+> not the 7.1% / 7.3% first published — and the conclusion that chunk size does not affect
+> fairness is **overturned**. §9 was re-measured against the server's real chat template
+> (95.7–98.4%, revised down from 97–99%). Full analysis:
 > [`CORRECTION-2026-08-02.md`](CORRECTION-2026-08-02.md).
 
 ## Setup
@@ -131,9 +131,10 @@ long job:        516,565 tok in 391.2 s
 **221× normal latency.** All three were released when the prefill finished. Ongoing decode
 is simultaneously throttled — not frozen, but starved.
 
-> ⚠️ The original text quantified this as "~1/35 of normal speed". That ratio came from the
-> faulty instrument and is **under revalidation**; the admission figures on this line
-> (367 s vs 1.66 s warm) are timestamps of first output and are unaffected. See
+> The original text quantified this as "~1/35 of normal speed", from the faulty instrument.
+> Re-measured token-weighted at 256K: decode runs at **1/20 of its undisturbed rate on the
+> 2048 profile and 1/59 on 8192** (§4). The admission figures on this line (367 s vs 1.66 s
+> warm) are timestamps of first output and were never affected. See
 > [`CORRECTION-2026-08-02.md`](CORRECTION-2026-08-02.md).
 
 > This does **not** apply to short prompts: at N=4 with short prompts, TTFT is 0.4 s.
@@ -141,42 +142,95 @@ is simultaneously throttled — not frozen, but starved.
 
 ## 4. Chunk size — MAX_NUM_BATCHED_TOKENS
 
-Measured at 256K prefill, `--async-scheduling` off in both cases.
+**Re-measured 2026-08-02 with the repaired instrument** (token-weighted, explicit prefill
+window, each stream its own baseline). Both profiles at 256K prefill, `--async-scheduling`
+off, three repetitions each; the 2048 profile was additionally repeated after a server
+restart, giving six. Medians below, spread in the following table.
 
 | Metric | 8192 | 2048 |
 |---|---|---|
-| Prefill | 1,529 tok/s | 1,469 tok/s (**−3.9%**) |
-| p95 output-chunk gap during prefill | 5.197 s | **1.590 s** (−69%) |
-| max output-chunk gap | 6.417 s | 2.085 s |
-| ~~Decode share during prefill~~ | ~~7.1%~~ | ~~7.3%~~ — ⚠️ **invalid, being re-measured** |
-| TTFT of a new short request | 150.7 s | 158.1 s (unchanged) |
-| **KV pool** | 1,598,763 tok | **2,671,557 tok** (+67%) |
+| Prefill | 1,584 tok/s | 1,462 tok/s (**−7.7%**) |
+| **Decode share during prefill** | **1.7%** | **5.0%** (**2.9× better**) |
+| Decode tokens delivered during prefill | 106 | 332 (**3.1×**) |
+| p95 output-chunk gap during prefill | 6.10 s | **1.64 s** (−73%) |
+| max output-chunk gap | 6.23 s | 1.66 s |
+| TTFT of a new short request | 145.4 s | 159.2 s |
+| Prefill window (256K) | 165.4 s | 179.2 s |
+| **KV pool** | 1,598,763 tok | **2,669,829 tok** (+67%) |
 | Max concurrency @1M | 1.59× | **2.55×** |
 
-**The mechanism holds:** the observed output-chunk gaps closely tracked
-`chunk_size ÷ effective_prefill_rate`. `8192 ÷ 1529 = 5.36 s` predicted vs 5.20 s measured;
-`2048 ÷ 1469 = 1.39 s` predicted vs 1.59 s measured. This is a wall-clock timing result and
-is independent of the fault below.
+Per-repetition spread — the separation between the profiles is roughly twenty times the
+spread within either:
 
-**Chunk size is a jitter and capacity lever.** Whether it is also a *fairness* lever —
-whether decode's share of the token budget is invariant to the budget's size — is not
-currently established.
+| | reps | decode share | decode tokens | prefill |
+|---|---|---|---|---|
+| 8192 | 3 | 1.6 / 1.7 / 1.8% | 105 / 107 / 107 | 1,583–1,586 tok/s |
+| 2048 (warm server) | 3 | 4.8 / 5.0 / 5.0% | 310 / 340 / 351 | 1,461–1,462 tok/s |
+| 2048 (after restart) | 3 | 4.5 / 5.1 / 5.2% | 310 / 339 / 341 | 1,458–1,469 tok/s |
 
-> ⚠️ **Under revalidation: the entire decode-share row, including the comparison.** The
-> absolute values (7.1% / 7.3%) came from a faulty instrument. We first assumed both sides
-> carried the same bias so the comparison survived; that assumption does not hold. Tokens
-> per SSE chunk may differ between the two chunk sizes, the unbounded window diluted each
-> run by a different amount, and the two reference calls were cold to different degrees.
-> The supporting arithmetic ("~9 tokens per chunk at 8192 vs ~2.3 at 2048") is likewise not
-> yet token-weighted. See [`CORRECTION-2026-08-02.md`](CORRECTION-2026-08-02.md).
+Undisturbed baselines were 36.3–39.0 tok/s in **both** profiles, which is the precondition
+for the comparison to mean anything: chunk size does not change undisturbed decode, only
+what happens to decode while a prefill runs. The 2048 profile reproduces across a server
+restart, so uptime and cache warmth do not confound the result.
+
+> **These figures replace the originally published 7.1% / 7.3%, which were invalid.** See
+> [`CORRECTION-2026-08-02.md`](CORRECTION-2026-08-02.md). The KV-pool figure was re-read
+> from the restarted server's own startup accounting (2,669,829 vs 2,671,557 published,
+> 0.06% apart); the 8192 KV figure was not re-verified, as that container no longer exists.
+
+**The gap mechanism holds:** observed output-chunk gaps closely tracked
+`chunk_size ÷ effective_prefill_rate`. `8192 ÷ 1584 = 5.17 s` predicted vs 6.10 s measured;
+`2048 ÷ 1462 = 1.40 s` predicted vs 1.64 s measured. Both overshoot the prediction by ~18%,
+consistently — the decode step itself takes time, and the repaired instrument no longer
+discards the gap that straddles the window boundary.
+
+**Chunk size is a fairness lever after all.** This overturns what we first published.
+
+The original conclusion was that decode share is *invariant* to chunk size (7.1% vs 7.3%),
+reasoned as: "at 8192 decode fits ~9 tokens per chunk, at 2048 ~2.3 — four times more
+opportunities, four times fewer tokens each, net zero." Token-weighted, the net is not
+zero. **2048 delivers 3.1× more decode tokens during the same prefill.**
+
+Half of that reasoning was right and half was wrong:
+
+| | 8192 | 2048 |
+|---|---|---|
+| Prefill chunks for a 262K prompt | 262,106 ÷ 8192 = **32** | 262,106 ÷ 2048 = **128** |
+| Decode tokens delivered | 106 | 332 |
+| **Tokens per chunk** | **3.3** | **2.6** |
+
+Decode does get one scheduling opportunity per prefill chunk — that part was right. But a
+decode step yields roughly `k` accepted speculative tokens (`MTP_NUM_TOKENS=5` here, so
+~2.6–3.3 accepted) **regardless of how large the chunk is**. It does not scale with chunk
+size. So total decode throughput scales with the *number* of chunks:
+
+```
+decode_tokens ≈ (prefill_tokens / chunk_size) × accepted_tokens_per_step
+```
+
+The model predicts 4× improvement from 8192 → 2048; measured 3.1×, the shortfall explained
+by the slightly higher per-step yield at 8192 (3.3 vs 2.6 tokens). This is falsifiable: it
+predicts decode share is roughly proportional to `1/chunk_size` until the per-step yield
+saturates at `k`.
+
+**Revised conclusion.** 2048 costs 7.7% prefill throughput — nearly twice the 3.9% we first
+reported — and buys a 67% larger KV pool, 73% less output jitter, and **2.9× the decode
+share under concurrent prefill**. For agent workloads that is a clearly better trade than
+the original write-up implied, because the fairness benefit was measured as zero when it is
+in fact the largest single effect.
+
+What is *not* fixed by chunk size is admission: a new short request waited 145–159 s in both
+profiles, released only when the prefill completed. The difference between them is simply
+how long the prefill takes.
 
 vLLM's chunked-prefill design states pending decodes should be prioritized and mixed with
-prefill — this stack appears to deviate from that stated intent. See [`repro/`](../repro/)
-for a minimal reproduction, which will be re-run on the repaired instrument before any
-issue is filed.
+prefill. At ~3 tokens per chunk against a 2048–8192-token prefill budget, this stack gives
+decode on the order of 0.1–0.2% of the token budget. See [`repro/`](../repro/) for a minimal
+reproduction, now carrying token-weighted numbers.
 
-**Conclusion:** 2048 buys much better jitter and a 67% larger KV pool for 4% prefill.
-It does not fix fairness or admission. It is still a strong agent profile.
+**Conclusion:** 2048 buys much better jitter, a 67% larger KV pool and 2.9× the decode
+share under concurrent prefill, for 7.7% prefill throughput. It does not fix admission.
+It is a strong agent profile — more strongly than we first concluded.
 
 ## 5. Prefix cache locality
 

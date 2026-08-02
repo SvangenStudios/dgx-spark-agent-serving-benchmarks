@@ -1,17 +1,20 @@
-# Minimal reproduction: decode starvation and blocked admission during long prefill
+# Minimal reproduction: one decode step per prefill chunk, and blocked admission
 
-> **⚠️ 2026-08-02 — not ready to file.** The instrument used for the decode-share numbers
-> below had three faults (SSE events counted as tokens, no prefill window, cold reference).
-> The percentages are being re-measured with `return_token_ids` and an explicit window
-> before this is filed as an issue. The **admission** result and the **chunk-gap mechanism**
-> are unaffected. See [`../results/CORRECTION-2026-08-02.md`](../results/CORRECTION-2026-08-02.md).
+> **2026-08-02: numbers below are the token-weighted re-measurement.** An earlier version of
+> this page carried figures from an instrument that counted SSE events as tokens, used no
+> prefill window and took a cold reference. Those are superseded. See
+> [`../results/CORRECTION-2026-08-02.md`](../results/CORRECTION-2026-08-02.md).
 
 ## Claim
 
 With chunked prefill enabled on this DSpark/speculative stack, an ongoing decode stream is
-severely starved while a long prefill runs — and reducing `--max-num-batched-tokens` 4×
-(8192 → 2048) does **not** improve its share. New requests are not admitted until the
-prefill finishes (~150 s observed, vs 1.7 s normal TTFT).
+severely starved while a long prefill runs: it receives **one speculative decode step per
+prefill chunk**, yielding ~3 accepted tokens regardless of chunk size — on the order of
+0.1–0.2% of the token budget. Because the per-step yield does not scale with chunk size,
+decode throughput scales with the number of chunks: reducing `--max-num-batched-tokens` 4×
+(8192 → 2048) improves decode share 2.9×, from 1.7% to 5.0% of the same stream's
+undisturbed rate. New requests are not admitted until the prefill finishes (145–159 s
+observed, vs 1.7 s normal TTFT) in **both** profiles.
 
 vLLM's chunked-prefill design states that pending decode requests are prioritized and
 batched before prefill is scheduled. This stack appears to deviate from that stated intent.
@@ -31,28 +34,46 @@ batched before prefill is scheduled. This stack appears to deviate from that sta
 3. Restart with `--max-num-batched-tokens 2048`. Warm again.
 4. Run `python3 ../scripts/prefill_decode_overlap.py 256000 chunk-2048`
 
-The script starts a streaming generation, injects a ~256K-token prefill 5 s later, then a
-new short request 20 s after that. It reports token-weighted decode throughput inside the
-prefill window, p50/p95/max output-chunk intervals, the new request's TTFT, and the prefill
-rate.
+The script starts a streaming generation, lets it run undisturbed for 25 s to establish its
+own baseline, injects a ~256K-token prefill, then a new short request 20 s after that. It
+reports token-weighted decode throughput inside the prefill window (submission → the long
+request's first output token), p50/p95/max output-chunk intervals, the new request's TTFT,
+and the prefill rate. Token counts come from streamed `token_ids` and are cross-checked
+against the server's own `usage.completion_tokens`; run `../scripts/probe_token_ids.py`
+first to confirm the server supports that.
 
 ## Measured results
 
-| Metric | chunk 8192 | chunk 2048 | Status |
-|---|---|---|---|
-| ~~Reference decode (undisturbed)~~ | ~~24.1 tok/s~~ | ~~23.0 tok/s~~ | ⚠️ cold, incl. TTFT — re-measuring |
-| ~~Decode during prefill~~ | ~~1.70 tok/s (7.1%)~~ | ~~1.68 tok/s (7.3%)~~ | ⚠️ events/s, not tok/s — re-measuring |
-| p95 output-chunk gap | 5.197 s | 1.590 s | valid |
-| max output-chunk gap | 6.417 s | 2.085 s | valid |
-| TTFT of new request | 150.7 s | 158.1 s | valid |
-| Prefill rate | 1,529 tok/s | 1,469 tok/s | valid |
+Medians of three repetitions per profile (2048 additionally repeated after a server
+restart, n=6; spread in `../results/RESULTS.md` §4).
 
-The observed p95 gaps closely tracked `chunk_size ÷ effective_prefill_rate` (5.36 s and
-1.39 s predicted) — decode gets one scheduling opportunity per chunk. That part is a
-wall-clock result and stands. The claim that the decode *share* is invariant across chunk
-sizes is **withdrawn pending re-measurement**: the three instrument faults did not
-necessarily bias the two runs equally, so the comparison is no more established than the
-absolutes.
+| Metric | chunk 8192 | chunk 2048 |
+|---|---|---|
+| Undisturbed baseline (same stream, before submit) | 36.3–39.0 tok/s | 36.3–39.0 tok/s |
+| Decode during prefill | 0.65 tok/s (**1.7%**) | 1.90 tok/s (**5.0%**) |
+| Decode tokens delivered during prefill | 106 | 332 |
+| Prefill chunks for the 262K prompt | 32 | 128 |
+| Accepted tokens per chunk | 3.3 | 2.6 |
+| p95 output-chunk gap | 6.10 s | 1.64 s |
+| max output-chunk gap | 6.23 s | 1.66 s |
+| TTFT of new request | 145.4 s | 159.2 s |
+| Prefill rate | 1,584 tok/s | 1,462 tok/s |
+
+The observed p95 gaps closely tracked `chunk_size ÷ effective_prefill_rate` (5.17 s and
+1.40 s predicted, both overshot by ~18%) — decode gets one scheduling opportunity per
+chunk. What that opportunity yields is ~`k` accepted speculative tokens
+(`MTP_NUM_TOKENS=5`), and crucially it does **not** scale with chunk size. Hence:
+
+```
+decode_tokens ≈ (prefill_tokens / chunk_size) × accepted_tokens_per_step
+```
+
+predicting 4× improvement from 8192 → 2048; measured 3.1×.
+
+An earlier version of this page claimed the decode share was invariant across chunk sizes.
+That was an artifact of counting SSE events rather than tokens: the event *rate* was
+nearly identical between profiles (1.70 vs 1.68 events/s) while the token content per
+event was not.
 
 ## Expected behavior
 
