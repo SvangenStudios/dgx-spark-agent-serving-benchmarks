@@ -141,6 +141,9 @@ See [`results/RESULTS.md`](results/RESULTS.md). Highlights:
    `"return_token_ids": true` and count `token_ids`. We documented this rule and then broke
    it in one script anyway — see [`results/CORRECTION-2026-08-02.md`](results/CORRECTION-2026-08-02.md).
 2. Warm up with **long** generations; three short calls are not "warm", and the effect decays after ~30 min idle.
+   Better still, when measuring interference: use **one stream as its own baseline**, before
+   vs during. A separate reference differs in prompt content, draft acceptance and sequence
+   length — measured at 30.4 vs 37.0 tok/s on the same run, a 20% swing in the result.
 3. Measure p50/p95 token intervals, not just the largest gap — partial starvation looks "green" otherwise.
 4. Salt every prompt uniquely, or you are measuring the prefix cache.
 5. Filter `repetition_penalty` on this DSpark build — the recipe documents an

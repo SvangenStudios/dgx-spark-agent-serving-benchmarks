@@ -78,6 +78,14 @@ def test_approximate_flattening_does_not_drop_assistant_tool_calls():
     assert "ONLY-IN-TOOLCALL" in pl.flatten(body)
 
 
+def test_approximate_flattening_emits_exactly_one_segment_per_message():
+    """Guards against a message being appended twice — once without and once with its
+    tool_calls — which would silently inflate every approximate token count."""
+    flat = pl.flatten(BODY)
+    assert flat.count("<|") == len(BODY["messages"]) + 1   # +1 for the tools segment
+    assert flat.count("<|assistant|>") == 1
+
+
 def test_unsupported_server_aborts_instead_of_approximating():
     """No silent fallback — that is how the first fault shipped."""
     with pytest.raises(SystemExit):

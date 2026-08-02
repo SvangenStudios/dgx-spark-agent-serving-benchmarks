@@ -183,6 +183,37 @@ correct; the label was not. Renamed to **output-chunk gap** throughout.
 7. Regression tests cover all four faults, and `scripts/probe_token_ids.py` is a standalone
    artifact that answers "can this server's stream be counted?" with an exit code.
 
+A second review pass found three more weaknesses in the repaired instrument, before it was
+ever used for a real measurement:
+
+8. **The baseline is now the same stream, measured against itself.** The ongoing generation
+   runs undisturbed for 25 s before the prefill is submitted, and that window is its
+   baseline. A separate reference request — however warm — still differs in prompt content,
+   draft acceptance, sequence length, clock state and incidental load. The standalone warm
+   reference is retained as a diagnostic line only.
+
+   This is not a theoretical refinement. On a 60K verification run both were measured at
+   once:
+
+   ```
+   undisturbed baseline (same stream):  30.39 tok/s  ->  decode share 8.2%
+   separate warm reference:             37.01 tok/s  ->  decode share 6.8%
+   ```
+
+   A 20% relative difference on a single run, in the direction that flatters the finding.
+   Whatever the corrected 256K numbers turn out to be, they must state which baseline they
+   used.
+9. **The ongoing stream must outlive the prefill window.** It previously generated at most
+   2,000 tokens; a 256K prefill runs for minutes, and if decode were *not* starved the
+   stream would finish first, leaving tokens to stop accruing while the divisor kept
+   running. The ceiling is now 8,000 and the script aborts with `StreamEndedEarly` rather
+   than reporting an artificially low rate.
+10. **Output-chunk gaps are clipped to the window, not filtered into it.** Selecting samples
+    inside the window and then differencing them silently discards the interval that
+    straddles the boundary — the stall at the moment the prefill begins, typically the
+    largest visible pause of the run. Every adjacent interval is now considered and its
+    overlap with the window taken.
+
 Filing the scheduling issue is deferred until the minimal reproduction runs on the repaired
 instrument.
 
@@ -202,9 +233,15 @@ Per configuration:
 3. Confirm the server is idle (no other clients on the port).
 4. Run `probe_token_ids.py` and require exit 0.
 5. Run the overlap test. All prompts are salted, so repetitions do not reuse cache.
-6. Repeat at least three times and report the spread, not a single run.
+6. Repeat at least three times per profile and report the **median and spread**, not a
+   single run.
 
 The short request fires 20 s after the long request is submitted. That is only an
 admission test if the prefill is still running at that point — at 256K it takes minutes,
 but on a small prefill the window closes first and the resulting TTFT says nothing about
-admission.
+admission. The script now labels that case explicitly in its output rather than leaving
+the reader to notice.
+
+Switching between the 8192 and 2048 profiles requires a server restart (~13 min warm
+load). On this cluster DS4 carries production agent traffic, so the A/B belongs in a
+planned maintenance window, not an opportunistic run.

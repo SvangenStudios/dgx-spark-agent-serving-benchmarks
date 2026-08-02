@@ -16,8 +16,15 @@ version of this file violated all three and published invalid numbers):
      If the server does not return token_ids, this script ABORTS. There is no fallback.
   2. The prefill window is explicit: from submission of the long request to the arrival of
      its first output token. Output outside that window is not "during prefill".
-  3. The reference is warm, streamed, and measured first token -> last token, so it
-     contains no TTFT and no cold-clock ramp.
+  3. The baseline is the SAME stream, measured before the prefill was submitted. One
+     request compared against itself carries no difference in prompt content, draft
+     acceptance, sequence length, clock state or incidental load. A separate warm
+     reference is still measured, but only as a diagnostic.
+  4. The ongoing stream must still be producing when the window closes, or the divisor
+     covers time in which no token could have arrived. The script aborts if it does not.
+  5. Output-chunk gaps are clipped to the window rather than computed from samples
+     filtered to it — otherwise the stall at the moment the prefill starts, typically the
+     largest visible pause, is dropped because it straddles the boundary.
 """
 import json
 import sys
@@ -30,6 +37,19 @@ BASE = "http://127.0.0.1:8888"
 U = BASE + "/v1/chat/completions"
 MODEL = "deepseek-v4-flash-0731"
 
+# The ongoing stream must outlive the prefill window. A 256K prefill runs for minutes; if
+# decode is NOT starved it would burn ~30 tok/s the whole time, so the ceiling has to cover
+# the undisturbed case, not the starved one. The script aborts rather than silently
+# dividing by a window the stream did not survive.
+ONGOING_MAX_TOKENS = 8000
+
+# How long the ongoing stream runs undisturbed before the prefill is submitted. This is the
+# stream's own baseline, so it needs enough tokens to be stable — 5 s is not enough.
+UNDISTURBED_SECONDS = 25
+
+# When the new short request is sent, relative to submission of the long request.
+SHORT_REQUEST_DELAY = 20
+
 FILL = ("Driftanteckning: rutinkontroll av kylsystem och natverkslankar genomford utan anmarkning. "
         "Loggrotation verifierad. Backup slutford enligt schema. Inga larm registrerade under passet. ")
 
@@ -40,6 +60,10 @@ class MissingTokenIds(Exception):
 
 class TokenCountMismatch(Exception):
     """Our token count disagrees with the server's own usage report."""
+
+
+class StreamEndedEarly(Exception):
+    """The ongoing generation finished before the prefill window closed."""
 
 
 # --- pure measurement helpers (unit-tested in tests/test_overlap_measurement.py) ---
@@ -111,6 +135,49 @@ def reference_decode_rate(samples):
 def chunk_gaps(samples):
     """Wall-clock gaps between output chunks — user-visible jitter, not throughput."""
     return [samples[i + 1][0] - samples[i][0] for i in range(len(samples) - 1)]
+
+
+def gaps_overlapping_window(samples, start, end):
+    """Output-chunk gaps clipped to a window.
+
+    Filtering samples to the window BEFORE computing gaps silently drops the interval
+    that straddles the boundary — which is the stall that occurs when the prefill starts,
+    often the largest visible pause of the whole run. Instead, every adjacent interval is
+    considered and its overlap with the window is taken.
+    """
+    out = []
+    for i in range(len(samples) - 1):
+        overlap = min(samples[i + 1][0], end) - max(samples[i][0], start)
+        if overlap > 0:
+            out.append(overlap)
+    return out
+
+
+def decode_share(samples, baseline_start, window_start, window_end):
+    """Decode rate inside the prefill window as a fraction of the SAME stream's rate
+    before it.
+
+    Using one request as its own baseline removes every difference a separate reference
+    request carries: prompt content, draft acceptance, sequence length, clock state and
+    incidental server load.
+    """
+    baseline = decode_rate_in_window(samples, baseline_start, window_start)
+    during = decode_rate_in_window(samples, window_start, window_end)
+    return during / baseline if baseline else 0.0
+
+
+def assert_stream_outlived_window(samples, window_end):
+    """The ongoing generation must still be producing when the prefill window closes.
+
+    If it hits max_tokens mid-prefill, tokens stop accruing while the window keeps
+    running, and the divisor makes decode read artificially low.
+    """
+    if not samples or samples[-1][0] < window_end:
+        last = samples[-1][0] if samples else None
+        raise StreamEndedEarly(
+            "ongoing decode ended before the prefill window closed "
+            "(last token at %s, window closes at %.1f); raise max_tokens"
+            % ("%.1f" % last if last is not None else "never", window_end))
 
 
 def pct(values, p):
@@ -217,7 +284,8 @@ def run(target, label):
     def ongoing():
         stream_samples(
             salted("Write a long, detailed text about Baltic Sea ecology and hydrography."),
-            2000, samples=stream)
+            ONGOING_MAX_TOKENS, samples=stream,
+            on_first_token=lambda t: window.__setitem__("stream_first", t))
 
     def long_call():
         window["submitted"] = time.monotonic()
@@ -232,41 +300,59 @@ def run(target, label):
 
     ta = threading.Thread(target=ongoing)
     ta.start()
-    time.sleep(5)
+    time.sleep(UNDISTURBED_SECONDS)   # the stream's own baseline is measured here
     tb = threading.Thread(target=long_call)
     tb.start()
-    time.sleep(20)
+    time.sleep(SHORT_REQUEST_DELAY)
     ts = threading.Thread(target=short_call)
     ts.start()
     ta.join(); ts.join(); tb.join()
 
     start, end = window.get("submitted"), window.get("first_token")
+    base_start = window.get("stream_first")
     if start is None or end is None:
         sys.exit("ABORT: the long request never produced a first token; no prefill window")
+    if base_start is None:
+        sys.exit("ABORT: the ongoing stream never produced a token; no baseline")
 
-    # --- metric 1: token-weighted throughput inside the prefill window ---
+    # The ongoing stream must still be running when the window closes, or the divisor
+    # covers time in which no tokens could have arrived.
+    try:
+        assert_stream_outlived_window(stream, end)
+    except StreamEndedEarly as e:
+        sys.exit("ABORT: %s (currently ONGOING_MAX_TOKENS=%d)" % (e, ONGOING_MAX_TOKENS))
+
+    # --- metric 1: the stream measured against ITSELF, before vs during ---
     n_tok = tokens_in_window(stream, start, end)
+    baseline_tps = decode_rate_in_window(stream, base_start, start)
     tps_during = decode_rate_in_window(stream, start, end)
-    share = 100 * tps_during / ref_tps if ref_tps else 0
+    share = 100 * decode_share(stream, base_start, start, end)
+    print("  undisturbed baseline:     %.2f tok/s  (same stream, %.1f s before submit)"
+          % (baseline_tps, start - base_start), flush=True)
     print("  prefill window:           %.1f s  (submit -> first output token)" % (end - start),
           flush=True)
-    print("  decode DURING prefill:    %.2f tok/s  (%.1f %% of reference; %d tokens counted)"
+    print("  decode DURING prefill:    %.2f tok/s  (%.1f %% of its own baseline; %d tokens)"
           % (tps_during, share, n_tok), flush=True)
+    print("  [diagnostic] separate warm reference: %.2f tok/s  (%.1f %% of that)"
+          % (ref_tps, 100 * tps_during / ref_tps if ref_tps else 0), flush=True)
 
     # --- metric 2: jitter, reported separately and never mixed with throughput ---
-    gaps = chunk_gaps([s for s in stream if start <= s[0] <= end])
+    gaps = gaps_overlapping_window(stream, start, end)
     print("  output-chunk gap p50/p95/max: %.3f s / %.3f s / %.3f s"
           % (pct(gaps, 0.50), pct(gaps, 0.95), max(gaps) if gaps else 0), flush=True)
 
-    print("  TTFT new short request:   %s"
-          % ("%.1f s" % short_ttft[0] if short_ttft else "-"), flush=True)
+    admission = "%.1f s" % short_ttft[0] if short_ttft else "-"
+    if short_ttft and SHORT_REQUEST_DELAY > (end - start):
+        admission += "  (NOT an admission result: the window closed before it was sent)"
+    print("  TTFT new short request:   %s" % admission, flush=True)
     if long_res and long_res[0]:
         dur = end - start
         print("  long job: %s tok prefilled in %.1f s  (%.0f tok/s prefill)"
               % (format(long_res[0], ","), dur, long_res[0] / dur), flush=True)
 
     verdict = "GREEN" if share >= 25 else "RED"
-    print("  >>> %s  (requirement: >=25 %% of reference decode)" % verdict, flush=True)
+    print("  >>> %s  (requirement: >=25 %% of its own undisturbed baseline)" % verdict,
+          flush=True)
 
 
 def main():

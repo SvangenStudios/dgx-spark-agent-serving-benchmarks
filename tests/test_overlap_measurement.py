@@ -89,6 +89,49 @@ def test_reference_rate_measures_first_token_to_last_token_not_total_time():
     assert ov.reference_decode_rate(samples) == pytest.approx(1.0)
 
 
+# --- The ongoing stream must outlive the prefill window -----------------------
+
+def test_stream_that_ended_before_the_window_closed_is_refused():
+    """If the ongoing generation finishes mid-prefill, tokens stop accruing but the
+    window keeps running — the divisor is too large and decode reads artificially low."""
+    samples = [(1.0, 5), (30.0, 2)]      # last token at t=30
+    with pytest.raises(ov.StreamEndedEarly):
+        ov.assert_stream_outlived_window(samples, window_end=170.0)
+
+
+def test_stream_still_producing_at_the_window_close_is_accepted():
+    samples = [(1.0, 5), (171.0, 2)]
+    ov.assert_stream_outlived_window(samples, window_end=170.0)   # no raise
+
+
+# --- Jitter must not lose the gap that straddles the window boundary ----------
+
+def test_gap_straddling_the_window_start_is_counted():
+    """The stall when the prefill begins spans the boundary. Filtering samples to the
+    window first drops that interval entirely — often the largest visible pause.
+
+    Interval 0.0 -> 10.0 overlaps window [5, 20] by 5 s. That 5 s must be reported.
+    """
+    samples = [(0.0, 1), (10.0, 1), (12.0, 1)]
+    assert ov.gaps_overlapping_window(samples, 5.0, 20.0) == [5.0, 2.0]
+
+
+def test_gaps_entirely_outside_the_window_are_excluded():
+    samples = [(0.0, 1), (1.0, 1), (30.0, 1), (31.0, 1)]
+    assert ov.gaps_overlapping_window(samples, 10.0, 20.0) == [10.0]
+
+
+# --- The baseline must come from the same stream, not a separate request ------
+
+def test_decode_share_compares_one_stream_against_itself():
+    """A separate reference differs in prompt content, draft acceptance, sequence length
+    and clock state. The same request before and during the prefill differs in none."""
+    samples = ([(float(t), 10) for t in range(0, 10)] +      # 10 tok/s undisturbed
+               [(float(t), 1) for t in range(10, 20)])       # 1 tok/s during prefill
+    share = ov.decode_share(samples, baseline_start=0.0, window_start=10.0, window_end=19.0)
+    assert share == pytest.approx(0.1, rel=0.15)
+
+
 # --- Throughput and jitter must not be conflated ------------------------------
 
 def test_chunk_gaps_are_independent_of_how_many_tokens_a_chunk_carries():
