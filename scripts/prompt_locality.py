@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Prompt Cache Analyzer — what does the difference between two prompts cost?
 
-Uses the server's OWN tokenizer (/tokenize) so block boundaries are exact.
+Uses the server's OWN tokenizer AND its own chat template (/tokenize in chat mode) so
+block boundaries are exact.
 
   python3 prompt_locality.py a.json b.json   # two chat-completion bodies
   python3 prompt_locality.py a.txt b.txt     # two plain texts
@@ -9,8 +10,12 @@ Uses the server's OWN tokenizer (/tokenize) so block boundaries are exact.
 Two modes:
   TOKEN MODE      exact first divergence, block index, theoretical reuse
   STRUCTURE MODE  (for JSON) which message/field moved or changed
+
+If the server cannot tokenize `messages`/`tools`, this aborts. `--allow-approximate`
+falls back to hand-rolled flattening with a warning — its absolute counts are unreliable
+(measured 93 tokens against the template's 338 on one agent body with one tool).
 """
-import json, os, sys, urllib.request
+import json, os, sys, urllib.error, urllib.request
 
 # REDACT=1 -> never print prompt content, only positions and fractions.
 REDACT = os.environ.get("REDACT", "0") == "1"
@@ -38,22 +43,62 @@ def prefill_rate(n_tokens):
     return PREFILL_CURVE[-1][1]
 
 
-def tokenize(text):
-    body = json.dumps({"model": MODEL, "prompt": text}).encode()
+def tokenize_request(obj, approximate=False):
+    """The body to POST to /tokenize.
+
+    A chat body is sent as `messages` + `tools` so the SERVER applies its own chat
+    template. Reconstructing the template by hand is not a small approximation: on an
+    agent body with one tool definition the real template produced 338 tokens where the
+    old hand-rolled flattening produced 93. See results/CORRECTION-2026-08-02.md.
+    """
+    if isinstance(obj, dict) and "messages" in obj and not approximate:
+        req = {"model": MODEL, "messages": obj["messages"], "add_generation_prompt": True}
+        if obj.get("tools"):
+            req["tools"] = obj["tools"]
+        return req
+    return {"model": MODEL, "prompt": flatten(obj)}
+
+
+def require_chat_tokenize(response):
+    """Abort rather than silently falling back to an approximation."""
+    if isinstance(response, dict) and response.get("__http"):
+        sys.exit(
+            "ABORT: the server rejected chat-mode /tokenize (HTTP %s: %s).\n"
+            "       Exact block boundaries require the server's own chat template.\n"
+            "       Re-run with --allow-approximate to use hand-rolled flattening,\n"
+            "       and treat the absolute token counts as unreliable."
+            % (response["__http"], str(response.get("__body"))[:200]))
+    return response
+
+
+def tokenize(obj, approximate=False):
+    body = json.dumps(tokenize_request(obj, approximate)).encode()
     r = urllib.request.Request(BASE + "/tokenize", body, {"Content-Type": "application/json"})
-    d = json.loads(urllib.request.urlopen(r, timeout=120).read())
+    try:
+        d = json.loads(urllib.request.urlopen(r, timeout=120).read())
+    except urllib.error.HTTPError as e:
+        d = {"__http": e.code, "__body": e.read().decode("utf-8", "ignore")}
+    if not approximate:
+        require_chat_tokenize(d)
     return d.get("tokens") or d.get("token_ids") or []
 
 
 def flatten(obj):
-    """Chat body -> the text that actually ends up in the prompt (approximate but consistent)."""
+    """Chat body -> approximate prompt text. Only used with --allow-approximate.
+
+    Keeps tool_calls: an assistant message may carry its entire payload there with
+    content=None, and dropping it makes a divergence inside a tool call invisible.
+    """
     if isinstance(obj, dict) and "messages" in obj:
         parts = []
         for m in obj["messages"]:
             c = m.get("content")
             if isinstance(c, list):
                 c = "".join(x.get("text", "") for x in c if isinstance(x, dict))
-            parts.append("<|%s|>%s" % (m.get("role", "?"), c or ""))
+            piece = c or ""
+            if m.get("tool_calls"):
+                piece += json.dumps(m["tool_calls"], sort_keys=False)
+            parts.append("<|%s|>%s" % (m.get("role", "?"), piece))
         if obj.get("tools"):
             parts.insert(0, "<|tools|>" + json.dumps(obj["tools"], sort_keys=False))
         return "\n".join(parts)
@@ -96,17 +141,27 @@ def structure_diff(a, b):
 
 
 def main():
-    if len(sys.argv) < 3:
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    approximate = "--allow-approximate" in sys.argv
+    if len(args) < 2:
         print(__doc__)
         return
-    A, B = load(sys.argv[1]), load(sys.argv[2])
-    ta, tb = tokenize(flatten(A)), tokenize(flatten(B))
+    A, B = load(args[0]), load(args[1])
+    ta, tb = tokenize(A, approximate), tokenize(B, approximate)
     n = min(len(ta), len(tb))
     div = next((i for i in range(n) if ta[i] != tb[i]), n if len(ta) != len(tb) else -1)
 
     print("=" * 62)
     print("PROMPT CACHE ANALYZER")
     print("=" * 62)
+    if approximate:
+        print("TOKENIZATION MODE:         APPROXIMATE (hand-rolled flattening)")
+        print("WARNING: absolute token counts and block indices are NOT reliable.")
+        print("         The server's real chat template expands tool definitions far")
+        print("         more than this flattening does. Use only when the server has")
+        print("         no chat-mode /tokenize.")
+    else:
+        print("TOKENIZATION MODE:         SERVER CHAT TEMPLATE (EXACT)")
     print("Prompt A:                  %s tokens" % format(len(ta), ","))
     print("Prompt B:                  %s tokens" % format(len(tb), ","))
     if div < 0:
@@ -153,4 +208,5 @@ def main():
     print("       dynamic last (timestamps, status, fresh tool results).")
 
 
-main()
+if __name__ == "__main__":
+    main()

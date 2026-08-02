@@ -1,14 +1,20 @@
-# Minimal reproduction: decode share pinned at ~7% during long prefill, independent of chunk size
+# Minimal reproduction: decode starvation and blocked admission during long prefill
+
+> **⚠️ 2026-08-02 — not ready to file.** The instrument used for the decode-share numbers
+> below had three faults (SSE events counted as tokens, no prefill window, cold reference).
+> The percentages are being re-measured with `return_token_ids` and an explicit window
+> before this is filed as an issue. The **admission** result and the **chunk-gap mechanism**
+> are unaffected. See [`../results/CORRECTION-2026-08-02.md`](../results/CORRECTION-2026-08-02.md).
 
 ## Claim
 
-With chunked prefill enabled on this DSpark/speculative stack, an ongoing decode stream
-receives ~7% of its undisturbed rate while a long prefill runs — and this share does
-**not** change when `--max-num-batched-tokens` is reduced 4× (8192 → 2048). New requests
-are not admitted until the prefill finishes (~150 s observed, vs 1.7 s normal TTFT).
+With chunked prefill enabled on this DSpark/speculative stack, an ongoing decode stream is
+severely starved while a long prefill runs — and reducing `--max-num-batched-tokens` 4×
+(8192 → 2048) does **not** improve its share. New requests are not admitted until the
+prefill finishes (~150 s observed, vs 1.7 s normal TTFT).
 
 vLLM's chunked-prefill design states that pending decode requests are prioritized and
-batched before prefill is scheduled. This stack deviates from that stated intent.
+batched before prefill is scheduled. This stack appears to deviate from that stated intent.
 
 ## Environment
 
@@ -26,24 +32,27 @@ batched before prefill is scheduled. This stack deviates from that stated intent
 4. Run `python3 ../scripts/prefill_decode_overlap.py 256000 chunk-2048`
 
 The script starts a streaming generation, injects a ~256K-token prefill 5 s later, then a
-new short request 20 s after that. It reports the ongoing stream's rate during the
-prefill, p50/p95/max token intervals, the new request's TTFT, and the prefill rate.
+new short request 20 s after that. It reports token-weighted decode throughput inside the
+prefill window, p50/p95/max output-chunk intervals, the new request's TTFT, and the prefill
+rate.
 
 ## Measured results
 
-| Metric | chunk 8192 | chunk 2048 |
-|---|---|---|
-| Reference decode (undisturbed) | 24.1 tok/s | 23.0 tok/s |
-| Decode during prefill | 1.70 tok/s (**7.1%**) | 1.68 tok/s (**7.3%**) |
-| p95 token gap | 5.197 s | 1.590 s |
-| max token gap | 6.417 s | 2.085 s |
-| TTFT of new request | 150.7 s | 158.1 s |
-| Prefill rate | 1,529 tok/s | 1,469 tok/s |
+| Metric | chunk 8192 | chunk 2048 | Status |
+|---|---|---|---|
+| ~~Reference decode (undisturbed)~~ | ~~24.1 tok/s~~ | ~~23.0 tok/s~~ | ⚠️ cold, incl. TTFT — re-measuring |
+| ~~Decode during prefill~~ | ~~1.70 tok/s (7.1%)~~ | ~~1.68 tok/s (7.3%)~~ | ⚠️ events/s, not tok/s — re-measuring |
+| p95 output-chunk gap | 5.197 s | 1.590 s | valid |
+| max output-chunk gap | 6.417 s | 2.085 s | valid |
+| TTFT of new request | 150.7 s | 158.1 s | valid |
+| Prefill rate | 1,529 tok/s | 1,469 tok/s | valid |
 
-The p95 gap tracks `chunk_size ÷ prefill_rate` almost exactly (5.36 s and 1.39 s
-predicted) — decode gets one scheduling opportunity per chunk. But the decode *share* is
-invariant: ~9 tokens per 8192-chunk vs ~2.3 tokens per 2048-chunk. Four times more
-opportunities, four times fewer tokens each, net zero.
+The observed p95 gaps closely tracked `chunk_size ÷ effective_prefill_rate` (5.36 s and
+1.39 s predicted) — decode gets one scheduling opportunity per chunk. That part is a
+wall-clock result and stands. The claim that the decode *share* is invariant across chunk
+sizes is **withdrawn pending re-measurement**: the three instrument faults did not
+necessarily bias the two runs equally, so the comparison is no more established than the
+absolutes.
 
 ## Expected behavior
 

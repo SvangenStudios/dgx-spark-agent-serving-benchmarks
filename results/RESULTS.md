@@ -3,6 +3,15 @@
 All figures were measured within the same night on the same rig. Where a conclusion later
 turned out to be wrong, it is kept together with its correction — see §7.
 
+> **⚠️ 2026-08-02: decode-share figures are under revalidation.** The overlap instrument
+> counted SSE events as tokens (~2.1–2.5 tokens per chunk on this stack), used no prefill
+> window, and took its reference from a cold server. The values **7.1% / 7.3%** in §4 — and
+> the comparison between them — plus the **~1/35 of normal speed** statement in §3 are
+> flagged below. The **§9 agent-capture figures have been re-measured** with the server's
+> real chat template and are now correct (95.7–98.4%, revised down from 97–99%). Everything
+> else on this page is unaffected. Full analysis:
+> [`CORRECTION-2026-08-02.md`](CORRECTION-2026-08-02.md).
+
 ## Setup
 
 | | |
@@ -120,7 +129,12 @@ long job:        516,565 tok in 391.2 s
 ```
 
 **221× normal latency.** All three were released when the prefill finished. Ongoing decode
-is simultaneously throttled to **~1/35 of normal speed** — not frozen, but starved.
+is simultaneously throttled — not frozen, but starved.
+
+> ⚠️ The original text quantified this as "~1/35 of normal speed". That ratio came from the
+> faulty instrument and is **under revalidation**; the admission figures on this line
+> (367 s vs 1.66 s warm) are timestamps of first output and are unaffected. See
+> [`CORRECTION-2026-08-02.md`](CORRECTION-2026-08-02.md).
 
 > This does **not** apply to short prompts: at N=4 with short prompts, TTFT is 0.4 s.
 > The blocking is specifically tied to long prefill saturating compute.
@@ -132,24 +146,34 @@ Measured at 256K prefill, `--async-scheduling` off in both cases.
 | Metric | 8192 | 2048 |
 |---|---|---|
 | Prefill | 1,529 tok/s | 1,469 tok/s (**−3.9%**) |
-| p95 token gap during prefill | 5.197 s | **1.590 s** (−69%) |
-| max token gap | 6.417 s | 2.085 s |
-| Decode share during prefill | 7.1% | 7.3% (**unchanged**) |
+| p95 output-chunk gap during prefill | 5.197 s | **1.590 s** (−69%) |
+| max output-chunk gap | 6.417 s | 2.085 s |
+| ~~Decode share during prefill~~ | ~~7.1%~~ | ~~7.3%~~ — ⚠️ **invalid, being re-measured** |
 | TTFT of a new short request | 150.7 s | 158.1 s (unchanged) |
 | **KV pool** | 1,598,763 tok | **2,671,557 tok** (+67%) |
 | Max concurrency @1M | 1.59× | **2.55×** |
 
-**The mechanism is confirmed:** the token gaps *are* the prefill chunks.
-`8192 ÷ 1529 = 5.36 s` vs measured p95 5.20 s. At 2048: `2048 ÷ 1469 = 1.39 s` vs 1.59 s.
+**The mechanism holds:** the observed output-chunk gaps closely tracked
+`chunk_size ÷ effective_prefill_rate`. `8192 ÷ 1529 = 5.36 s` predicted vs 5.20 s measured;
+`2048 ÷ 1469 = 1.39 s` predicted vs 1.59 s measured. This is a wall-clock timing result and
+is independent of the fault below.
 
-**But chunk size is a jitter lever, not a fairness lever.** Decode share is pinned at ~7%:
-at 8192 decode fits ~9 tokens per chunk, at 2048 ~2.3 — four times more opportunities,
-four times fewer tokens each, net zero. The scheduler gives decode a *fixed share of the
-token budget*, and that share cannot be changed by changing the budget's size.
+**Chunk size is a jitter and capacity lever.** Whether it is also a *fairness* lever —
+whether decode's share of the token budget is invariant to the budget's size — is not
+currently established.
+
+> ⚠️ **Under revalidation: the entire decode-share row, including the comparison.** The
+> absolute values (7.1% / 7.3%) came from a faulty instrument. We first assumed both sides
+> carried the same bias so the comparison survived; that assumption does not hold. Tokens
+> per SSE chunk may differ between the two chunk sizes, the unbounded window diluted each
+> run by a different amount, and the two reference calls were cold to different degrees.
+> The supporting arithmetic ("~9 tokens per chunk at 8192 vs ~2.3 at 2048") is likewise not
+> yet token-weighted. See [`CORRECTION-2026-08-02.md`](CORRECTION-2026-08-02.md).
 
 vLLM's chunked-prefill design states pending decodes should be prioritized and mixed with
-prefill — this stack deviates from that stated intent. See [`repro/`](../repro/) for a
-minimal reproduction.
+prefill — this stack appears to deviate from that stated intent. See [`repro/`](../repro/)
+for a minimal reproduction, which will be re-run on the repaired instrument before any
+issue is filed.
 
 **Conclusion:** 2048 buys much better jitter and a 67% larger KV pool for 4% prefill.
 It does not fix fairness or admission. It is still a strong agent profile.
@@ -252,7 +276,7 @@ Kept because they are as useful as the results.
 
 1. **A max-gap test misread partial starvation as "green".** Our first overlap measurement
    looked for a stall > 20 s; none occurred, so the script printed "decode continued" —
-   while decode was throttled to 1/35 of normal. **Measure p50/p95 token intervals.**
+   while decode was in fact severely throttled. **Measure p50/p95 output-chunk intervals.**
 2. **GPU-mem-util 0.70 as a "safety measure" was destructive.** Weights take 77.7 GiB of a
    ~119.6 GiB node; at 0.70 the KV budget fell to 2.39 GiB — insufficient for even 32K.
    **When weights dominate memory, GMU is a KV lever, not a safety lever.**
@@ -269,18 +293,27 @@ Kept because they are as useful as the results.
    allocations don't appear there. Read system `free` and the engine's own logs.
 9. **Do not read an instantaneous ETA as a trend**, and **compare the same phase between
    runs** — early-shard rate vs steady-state rate produced a false 2.6× conclusion.
+10. **We documented a trap and then walked into it.** Discipline rule 1 in the README said
+    streamed output represents speculative decode *steps*, not accepted tokens — and the
+    overlap script counted SSE events as tokens anyway (~2.5 tokens per chunk here).
+    A written rule is not a guard; **a regression test is.** The tests now enforce it. See
+    [`CORRECTION-2026-08-02.md`](CORRECTION-2026-08-02.md).
 
 ## 8. Known limitations
 
 - The prefill concurrency test is prefill-dominated by design and says nothing about
   decode concurrency (hence the separate test).
 - Reference decode in the overlap tests was measured on a cool server (23–24 tok/s); both
-  configurations were measured under equal conditions, so the comparison holds.
+  configurations were measured under equal conditions, so the comparison holds. ⚠️ We
+  under-rated this: a warm reference measures 21.3 tok/s of *pure* decode against 17.1 tok/s
+  by the cold total-time method — an ~18% understatement that inflated the reported decode
+  share. Combined with two further faults it invalidates the absolute values; see
+  [`CORRECTION-2026-08-02.md`](CORRECTION-2026-08-02.md).
 - Whether two concurrent prefills share bandwidth is **unanswered** (cache contamination).
 - No long soak yet. Xid errors during the session: 0.
 - Quality gain vs the previous model (Artificial Analysis 40 → 50) is the vendor's figure
   at maximum reasoning effort; our production setting (`thinking=false`) is unmeasured.
-- The old production model's admission behavior was never measured — the ~7% decode share
+- The old production model's admission behavior was never measured — the decode starvation
   may be inherited rather than new.
 
 ## 9. Real agent workload (Hermes v0.19.0)
@@ -293,14 +326,27 @@ prompt. A second task (string-conversion bug class) completed correctly in **316
 
 **Prompt locality across agent turns (server tokenizer, 256-token blocks):**
 
-| Transition | Prompt size | First divergence | Reusable prefix | Re-prefill |
-|---|---|---|---|---|
-| turn 1→2 | 15,169 tok | token 15,168 (last) | **97.1%** | 453 tok |
-| turn 5→6 | 16,549 tok | token 16,548 (last) | **98.7%** | 213 tok |
-| turn 9→10 | 17,655 tok | token 17,654 (last) | **97.5%** | 439 tok |
+Re-measured 2026-08-02 with the server's real chat template (`/tokenize` in chat mode with
+`messages` + `tools` + `add_generation_prompt`):
 
-**The agent framework is already cache-optimal.** Prompts are built append-only: no
-mutating timestamps, no reordered tool lists, no rewritten history. Each agent step
-re-prefills only the new tail (~200–450 tokens ≈ 0.2 s) instead of the full context
-(~10 s). This is the null-result counterpart to the synthetic dirty-top experiments: the
+| Transition | Prompt A → B | First divergence | Reusable prefix | Re-prefill |
+|---|---|---|---|---|
+| turn 1→2 | 14,989 → 15,511 tok | token 14,989 (last of A) | **95.7%** | 663 tok |
+| turn 5→6 | 16,799 → 16,906 tok | token 16,799 (last of A) | **98.4%** | 266 tok |
+| turn 9→10 | 18,274 → 18,533 tok | token 18,274 (last of A) | **98.1%** | 357 tok |
+
+> The first published version of this table read 97.1 / 98.7 / 97.5% with 453 / 213 / 439
+> tokens re-prefilled. Those came from a hand-rolled flattening that did not apply the chat
+> template and omitted serialized `assistant` `tool_calls`. When the fault was found we
+> predicted the corrected figures could only go *up*, since divergence sits at the last
+> token and `reuse ≈ (len − 256 − remainder) / len` grows with `len`. **That prediction was
+> wrong for turn 1→2**: the previously invisible tool-call payload in the appended tail is
+> larger than the effect of the longer prefix, and reuse fell from 97.1% to 95.7%. The
+> lesson is recorded rather than quietly overwritten. See
+> [`CORRECTION-2026-08-02.md`](CORRECTION-2026-08-02.md).
+
+**The agent framework is already cache-optimal.** Prompts are built append-only — the first
+divergence lands on the last token of the previous prompt in every transition: no mutating
+timestamps, no reordered tool lists, no rewritten history. Each agent step re-prefills only
+the new tail (~270–660 tokens ≈ 0.2–0.4 s) instead of the full context (~10 s). This is the null-result counterpart to the synthetic dirty-top experiments: the
 tool's value here was *verifying* cache health, not finding a problem.

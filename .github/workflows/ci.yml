@@ -7,6 +7,12 @@ jobs:
       - uses: actions/checkout@v4
       - name: Syntax check all scripts
         run: python3 -m py_compile scripts/*.py
+      - name: Install test dependencies
+        run: pip install pytest
+      - name: Measurement regression tests
+        # These encode the four instrument faults found on 2026-08-02. A written
+        # measurement rule is not a guard; these are.
+        run: python3 -m pytest tests/ -q
       - name: Secrets and address scan
         run: |
           # Fail if anything resembling private addresses, tokens, usernames
