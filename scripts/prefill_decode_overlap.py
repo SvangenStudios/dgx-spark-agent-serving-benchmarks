@@ -66,6 +66,42 @@ class StreamEndedEarly(Exception):
     """The ongoing generation finished before the prefill window closed."""
 
 
+class UsageMissing(Exception):
+    """The server did not report usage, so the token count cannot be cross-checked."""
+
+
+def guarded(fn, errors):
+    """Wrap a thread target so its exception is recorded instead of discarded.
+
+    Every integrity guard in this file runs inside a worker thread, and
+    threading.Thread swallows exceptions from its target. Without this the guards
+    would be decorative: a TokenCountMismatch in the ongoing stream would vanish and
+    the run would report a number computed from partial data.
+    """
+    def wrapped():
+        try:
+            fn()
+        except BaseException as e:            # noqa: BLE001 - deliberately broad
+            errors.append(e)
+    return wrapped
+
+
+def admission_is_measurable(submit_t, window_start, window_end):
+    """Was the new short request actually submitted while the prefill was running?
+
+    Judged from the real timestamp, not from the delay we intended: thread scheduling
+    decides when the request truly lands.
+    """
+    return window_start <= submit_t <= window_end
+
+
+def stream_margin(samples, window_end):
+    """How long the ongoing stream kept producing after the window closed."""
+    if not samples:
+        return 0.0
+    return samples[-1][0] - window_end
+
+
 # --- pure measurement helpers (unit-tested in tests/test_overlap_measurement.py) ---
 
 def chunk_token_count(chunk):
@@ -97,7 +133,10 @@ def verify_against_usage(samples, usage):
     count never matches usage on a speculative stack. A written rule is not a guard.
     """
     if not usage or usage.get("completion_tokens") is None:
-        return
+        raise UsageMissing(
+            "server did not report usage.completion_tokens; the token count cannot be "
+            "cross-checked, and an unverified count is what produced the original bug. "
+            'Ensure "stream_options": {"include_usage": true} is accepted.')
     counted = sum(n for _, n in samples)
     reported = usage["completion_tokens"]
     if counted != reported:
@@ -295,18 +334,25 @@ def run(target, label):
 
     def short_call():
         t0 = time.monotonic()
+        window["short_submitted"] = t0
         stream_samples(salted("Reply with one word: hi"), 5,
                        on_first_token=lambda t: short_ttft.append(t - t0))
 
-    ta = threading.Thread(target=ongoing)
+    errors = []
+    ta = threading.Thread(target=guarded(ongoing, errors))
     ta.start()
     time.sleep(UNDISTURBED_SECONDS)   # the stream's own baseline is measured here
-    tb = threading.Thread(target=long_call)
+    tb = threading.Thread(target=guarded(long_call, errors))
     tb.start()
     time.sleep(SHORT_REQUEST_DELAY)
-    ts = threading.Thread(target=short_call)
+    ts = threading.Thread(target=guarded(short_call, errors))
     ts.start()
     ta.join(); ts.join(); tb.join()
+
+    if errors:
+        for e in errors:
+            print("  WORKER ERROR: %s: %s" % (type(e).__name__, e), flush=True)
+        sys.exit("ABORT: a measurement thread failed; the run is not trustworthy")
 
     start, end = window.get("submitted"), window.get("first_token")
     base_start = window.get("stream_first")
@@ -321,6 +367,10 @@ def run(target, label):
         assert_stream_outlived_window(stream, end)
     except StreamEndedEarly as e:
         sys.exit("ABORT: %s (currently ONGOING_MAX_TOKENS=%d)" % (e, ONGOING_MAX_TOKENS))
+    margin = stream_margin(stream, end)
+    if margin < 10.0:
+        print("  WARNING: ongoing stream outlived the window by only %.1f s — raise "
+              "ONGOING_MAX_TOKENS (currently %d)" % (margin, ONGOING_MAX_TOKENS), flush=True)
 
     # --- metric 1: the stream measured against ITSELF, before vs during ---
     n_tok = tokens_in_window(stream, start, end)
@@ -342,9 +392,14 @@ def run(target, label):
           % (pct(gaps, 0.50), pct(gaps, 0.95), max(gaps) if gaps else 0), flush=True)
 
     admission = "%.1f s" % short_ttft[0] if short_ttft else "-"
-    if short_ttft and SHORT_REQUEST_DELAY > (end - start):
-        admission += "  (NOT an admission result: the window closed before it was sent)"
+    short_t = window.get("short_submitted")
+    if short_ttft and short_t is not None and not admission_is_measurable(short_t, start, end):
+        admission += ("  (NOT an admission result: submitted %.1f s into a %.1f s window)"
+                      % (short_t - start, end - start))
+    elif short_ttft and short_t is None:
+        admission += "  (submission time unknown — not usable as an admission result)"
     print("  TTFT new short request:   %s" % admission, flush=True)
+    print("  stream margin past window: %.1f s" % margin, flush=True)
     if long_res and long_res[0]:
         dur = end - start
         print("  long job: %s tok prefilled in %.1f s  (%.0f tok/s prefill)"

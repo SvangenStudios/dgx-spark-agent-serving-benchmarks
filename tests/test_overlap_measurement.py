@@ -5,6 +5,7 @@ results/CORRECTION-2026-08-02.md.
 """
 import os
 import sys
+import threading
 
 import pytest
 
@@ -130,6 +131,56 @@ def test_decode_share_compares_one_stream_against_itself():
                [(float(t), 1) for t in range(10, 20)])       # 1 tok/s during prefill
     share = ov.decode_share(samples, baseline_start=0.0, window_start=10.0, window_end=19.0)
     assert share == pytest.approx(0.1, rel=0.15)
+
+
+# --- Integrity guards must not be defeated by the harness around them ---------
+
+def test_an_error_inside_a_worker_thread_is_not_swallowed():
+    """threading.Thread discards exceptions from its target. Every guard in this file
+    runs inside a worker thread, so without this the guards are decorative."""
+    errors = []
+    thread = threading.Thread(target=ov.guarded(
+        lambda: (_ for _ in ()).throw(ov.TokenCountMismatch("boom")), errors))
+    thread.start()
+    thread.join()
+    assert len(errors) == 1
+    assert isinstance(errors[0], ov.TokenCountMismatch)
+
+
+def test_a_clean_worker_thread_records_no_error():
+    errors = []
+    thread = threading.Thread(target=ov.guarded(lambda: None, errors))
+    thread.start()
+    thread.join()
+    assert errors == []
+
+
+def test_absent_usage_is_refused_rather_than_skipping_the_crosscheck():
+    """If the server stops reporting usage, the cross-check silently becomes a no-op —
+    which is the same failure mode as having no cross-check at all."""
+    samples = [(1.0, 2), (2.0, 3)]
+    with pytest.raises(ov.UsageMissing):
+        ov.verify_against_usage(samples, None)
+    with pytest.raises(ov.UsageMissing):
+        ov.verify_against_usage(samples, {"prompt_tokens": 10})
+
+
+# --- Admission must be judged from real timestamps, not the intended delay ----
+
+def test_admission_result_is_valid_only_if_the_request_landed_inside_the_window():
+    """The short request is *intended* to arrive 20 s into the prefill, but thread
+    scheduling decides when it actually does. Judge from the real timestamp."""
+    assert ov.admission_is_measurable(submit_t=120.0, window_start=100.0, window_end=280.0)
+    assert not ov.admission_is_measurable(submit_t=300.0, window_start=100.0, window_end=280.0)
+    assert not ov.admission_is_measurable(submit_t=90.0, window_start=100.0, window_end=280.0)
+
+
+# --- How much margin did the ongoing stream actually have? -------------------
+
+def test_stream_margin_reports_how_long_the_stream_outlived_the_window():
+    """A run that only just survived the window is a warning about ONGOING_MAX_TOKENS,
+    even though it passes the hard guard."""
+    assert ov.stream_margin([(1.0, 1), (200.0, 1)], window_end=180.0) == pytest.approx(20.0)
 
 
 # --- Throughput and jitter must not be conflated ------------------------------

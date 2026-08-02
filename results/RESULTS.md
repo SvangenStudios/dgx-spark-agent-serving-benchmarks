@@ -173,7 +173,12 @@ for the comparison to mean anything: chunk size does not change undisturbed deco
 what happens to decode while a prefill runs. The 2048 profile reproduces across a server
 restart, so uptime and cache warmth do not confound the result.
 
-> **These figures replace the originally published 7.1% / 7.3%, which were invalid.** See
+> **These figures replace the originally published 7.1% / 7.3%, which were invalid.**
+> They were taken with the instrument at `e81d9ee`, before four integrity guards were
+> added; see "Provenance caveat" in the correction document. A verification run on the
+> hardened instrument reproduces the 2048 figure (**5.1%** against a 5.0% median); the
+> 8192 verification awaits a maintenance window. Raw output for all ten runs:
+> [`raw/ab-256k-2026-08-02.log`](raw/ab-256k-2026-08-02.log). See
 > [`CORRECTION-2026-08-02.md`](CORRECTION-2026-08-02.md). The KV-pool figure was re-read
 > from the restarted server's own startup accounting (2,669,829 vs 2,671,557 published,
 > 0.06% apart); the 8192 KV figure was not re-verified, as that container no longer exists.

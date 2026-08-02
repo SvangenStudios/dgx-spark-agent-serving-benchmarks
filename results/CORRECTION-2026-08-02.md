@@ -125,6 +125,26 @@ starvation is worse than we reported, and the corrected prefill cost of the 2048
 Three faults with opposing signs is why no corrected number could be reasoned out in
 advance. Our own written estimate before measuring was "~8–15%"; the answer was 5.0%.
 
+### Provenance caveat
+
+The nine runs were taken with the instrument at commit `e81d9ee`, which did **not** yet
+have four integrity guards added afterwards:
+
+- exceptions raised inside the worker threads were discarded by `threading.Thread`, so a
+  `TokenCountMismatch` or `MissingTokenIds` in the ongoing stream would have vanished
+  silently instead of failing the run;
+- a missing `usage.completion_tokens` skipped the cross-check instead of refusing it;
+- the admission result was labelled from the *intended* 20-second delay rather than the
+  short request's actual submission timestamp;
+- the margin by which the ongoing stream outlived the window was not reported, so a run
+  that only just survived looked identical to one with plenty of headroom.
+
+None of these is likely to have corrupted the results — the nine runs are internally
+consistent to ±0.35 percentage points and the per-run token counts cross-checked against
+`usage` at the time — but "likely" is not the standard this repository claims. The raw log
+is committed with this caveat rather than presented as a fully hardened measurement.
+Verification runs with the hardened instrument are listed under **Pending** below.
+
 ### What was verified as unchanged
 
 - Undisturbed decode baselines were 36.3–39.0 tok/s in **both** profiles — the precondition
@@ -255,6 +275,22 @@ ever used for a real measurement:
 
 Filing the scheduling issue is deferred until the minimal reproduction runs on the repaired
 instrument.
+
+## Pending before this is called final
+
+- [x] Token-weighted A/B on both profiles, three repetitions each
+- [x] Raw log committed with provenance (`results/raw/ab-256k-2026-08-02.log`)
+- [x] Integrity guards: thread-exception propagation, hard refusal on missing `usage`,
+      admission judged from real timestamps, stream margin reported
+- [x] Verification repetition on **2048** with the hardened instrument: **5.1%**
+      (348 tokens, 1,455 tok/s prefill, 180.1 s window, 160.1 s admission delay,
+      31.5 s stream margin). Reproduces the 5.0% median from the six earlier runs. No
+      worker errors, no missing-usage refusals, no margin warning — every guard passed.
+- [ ] Verification repetition on **8192**. Requires two server restarts and is scheduled
+      for a maintenance window; the production profile stays on 2048 until then.
+
+The 2048 figure is confirmed on the hardened instrument. Treat **1.7% for 8192** as
+measured but not yet re-confirmed.
 
 ## Re-measurement protocol
 

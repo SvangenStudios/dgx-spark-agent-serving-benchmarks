@@ -1,0 +1,173 @@
+# Raw output — 256K prefill/decode overlap A/B, 2026-08-02
+#
+# Instrument:   scripts/prefill_decode_overlap.py at commit e81d9ee
+#               (BEFORE the integrity guards added in the following commit — see
+#               "Provenance caveat" in results/CORRECTION-2026-08-02.md)
+# Command:      python3 prefill_decode_overlap.py 256000 <label>
+#               driven by 3 repetitions per arm
+# Server:       DeepSeek-V4-Flash-0731 @ 7872f01b, vLLM 0.21.1rc1.dev339 + DSpark
+#               overlay, TP=2 over RoCE, 2x DGX Spark GB10
+# Profiles:     chunk8192      = .env.chunk8192      (MAX_NUM_BATCHED_TOKENS=8192)
+#               chunk2048      = .env.chunk2048      (MAX_NUM_BATCHED_TOKENS=2048)
+#               chunk2048-cold = same as chunk2048, measured after a server restart
+# Arms in file order:
+#   chunk2048       03:33:48 - 03:47:05 CEST   (server up 5 h)
+#   chunk8192       03:54:20 - 04:07:1x CEST   (server restarted 03:47:56-03:52:59)
+#   chunk2048-cold  04:13:21 - 04:26:xx CEST   (server restarted 04:07:25-04:12:12)
+# All measurement prompts salted; this build exposes no /reset_prefix_cache (404).
+#
+=== arm chunk2048, 3 repetitions, started 2026-08-02T03:33:48+02:00 ===
+
+--- repetition 1/3  2026-08-02T03:33:48+02:00 ---
+CONFIG: chunk2048-r1   prefill=256K
+  capability probe: token_ids returned OK
+  warming up (long generation)...
+  reference decode (warm, undisturbed): 37.11 tok/s  (400 tokens in 162 chunks)
+  undisturbed baseline:     38.04 tok/s  (same stream, 24.8 s before submit)
+  prefill window:           179.4 s  (submit -> first output token)
+  decode DURING prefill:    1.89 tok/s  (5.0 % of its own baseline; 340 tokens)
+  [diagnostic] separate warm reference: 37.11 tok/s  (5.1 % of that)
+  output-chunk gap p50/p95/max: 1.341 s / 1.647 s / 1.974 s
+  TTFT new short request:   159.4 s
+  long job: 262,106 tok prefilled in 179.4 s  (1461 tok/s prefill)
+  >>> RED  (requirement: >=25 % of its own undisturbed baseline)
+
+--- repetition 2/3  2026-08-02T03:38:13+02:00 ---
+CONFIG: chunk2048-r2   prefill=256K
+  capability probe: token_ids returned OK
+  warming up (long generation)...
+  reference decode (warm, undisturbed): 39.90 tok/s  (400 tokens in 151 chunks)
+  undisturbed baseline:     36.31 tok/s  (same stream, 24.8 s before submit)
+  prefill window:           179.3 s  (submit -> first output token)
+  decode DURING prefill:    1.73 tok/s  (4.8 % of its own baseline; 310 tokens)
+  [diagnostic] separate warm reference: 39.90 tok/s  (4.3 % of that)
+  output-chunk gap p50/p95/max: 1.337 s / 1.638 s / 1.983 s
+  TTFT new short request:   159.3 s
+  long job: 262,105 tok prefilled in 179.3 s  (1462 tok/s prefill)
+  >>> RED  (requirement: >=25 % of its own undisturbed baseline)
+
+--- repetition 3/3  2026-08-02T03:42:38+02:00 ---
+CONFIG: chunk2048-r3   prefill=256K
+  capability probe: token_ids returned OK
+  warming up (long generation)...
+  reference decode (warm, undisturbed): 34.78 tok/s  (400 tokens in 172 chunks)
+  undisturbed baseline:     38.97 tok/s  (same stream, 24.8 s before submit)
+  prefill window:           179.3 s  (submit -> first output token)
+  decode DURING prefill:    1.96 tok/s  (5.0 % of its own baseline; 351 tokens)
+  [diagnostic] separate warm reference: 34.78 tok/s  (5.6 % of that)
+  output-chunk gap p50/p95/max: 1.339 s / 1.645 s / 1.922 s
+  TTFT new short request:   159.3 s
+  long job: 262,107 tok prefilled in 179.3 s  (1462 tok/s prefill)
+  >>> RED  (requirement: >=25 % of its own undisturbed baseline)
+
+=== arm chunk2048 done 2026-08-02T03:47:05+02:00 ===
+=== arm chunk8192, 3 repetitions, started 2026-08-02T03:54:20+02:00 ===
+
+--- repetition 1/3  2026-08-02T03:54:20+02:00 ---
+CONFIG: chunk8192-r1   prefill=256K
+  capability probe: token_ids returned OK
+  warming up (long generation)...
+  reference decode (warm, undisturbed): 36.64 tok/s  (400 tokens in 165 chunks)
+  undisturbed baseline:     36.27 tok/s  (same stream, 24.8 s before submit)
+  prefill window:           165.6 s  (submit -> first output token)
+  decode DURING prefill:    0.65 tok/s  (1.8 % of its own baseline; 107 tokens)
+  [diagnostic] separate warm reference: 36.64 tok/s  (1.8 % of that)
+  output-chunk gap p50/p95/max: 4.515 s / 6.114 s / 6.219 s
+  TTFT new short request:   145.6 s
+  long job: 262,106 tok prefilled in 165.6 s  (1583 tok/s prefill)
+  >>> RED  (requirement: >=25 % of its own undisturbed baseline)
+
+--- repetition 2/3  2026-08-02T03:58:27+02:00 ---
+CONFIG: chunk8192-r2   prefill=256K
+  capability probe: token_ids returned OK
+  warming up (long generation)...
+  reference decode (warm, undisturbed): 37.44 tok/s  (400 tokens in 162 chunks)
+  undisturbed baseline:     38.41 tok/s  (same stream, 24.8 s before submit)
+  prefill window:           165.4 s  (submit -> first output token)
+  decode DURING prefill:    0.65 tok/s  (1.7 % of its own baseline; 107 tokens)
+  [diagnostic] separate warm reference: 37.44 tok/s  (1.7 % of that)
+  output-chunk gap p50/p95/max: 4.595 s / 6.097 s / 6.259 s
+  TTFT new short request:   145.4 s
+  long job: 262,106 tok prefilled in 165.4 s  (1584 tok/s prefill)
+  >>> RED  (requirement: >=25 % of its own undisturbed baseline)
+
+--- repetition 3/3  2026-08-02T04:02:54+02:00 ---
+CONFIG: chunk8192-r3   prefill=256K
+  capability probe: token_ids returned OK
+  warming up (long generation)...
+  reference decode (warm, undisturbed): 37.71 tok/s  (400 tokens in 160 chunks)
+  undisturbed baseline:     39.02 tok/s  (same stream, 24.8 s before submit)
+  prefill window:           165.3 s  (submit -> first output token)
+  decode DURING prefill:    0.64 tok/s  (1.6 % of its own baseline; 105 tokens)
+  [diagnostic] separate warm reference: 37.71 tok/s  (1.7 % of that)
+  output-chunk gap p50/p95/max: 4.602 s / 6.095 s / 6.209 s
+  TTFT new short request:   145.2 s
+  long job: 262,107 tok prefilled in 165.3 s  (1586 tok/s prefill)
+  >>> RED  (requirement: >=25 % of its own undisturbed baseline)
+
+=== arm chunk8192 done 2026-08-02T04:07:15+02:00 ===
+=== arm chunk2048-cold, 3 repetitions, started 2026-08-02T04:13:21+02:00 ===
+
+--- repetition 1/3  2026-08-02T04:13:21+02:00 ---
+CONFIG: chunk2048-cold-r1   prefill=256K
+  capability probe: token_ids returned OK
+  warming up (long generation)...
+  reference decode (warm, undisturbed): 38.02 tok/s  (400 tokens in 159 chunks)
+  undisturbed baseline:     36.60 tok/s  (same stream, 24.8 s before submit)
+  prefill window:           179.3 s  (submit -> first output token)
+  decode DURING prefill:    1.90 tok/s  (5.2 % of its own baseline; 341 tokens)
+  [diagnostic] separate warm reference: 38.02 tok/s  (5.0 % of that)
+  output-chunk gap p50/p95/max: 1.337 s / 1.650 s / 1.673 s
+  TTFT new short request:   159.3 s
+  long job: 262,106 tok prefilled in 179.3 s  (1461 tok/s prefill)
+  >>> RED  (requirement: >=25 % of its own undisturbed baseline)
+
+--- repetition 2/3  2026-08-02T04:17:39+02:00 ---
+CONFIG: chunk2048-cold-r2   prefill=256K
+  capability probe: token_ids returned OK
+  warming up (long generation)...
+  reference decode (warm, undisturbed): 37.00 tok/s  (400 tokens in 163 chunks)
+  undisturbed baseline:     38.12 tok/s  (same stream, 24.8 s before submit)
+  prefill window:           179.8 s  (submit -> first output token)
+  decode DURING prefill:    1.72 tok/s  (4.5 % of its own baseline; 310 tokens)
+  [diagnostic] separate warm reference: 37.00 tok/s  (4.7 % of that)
+  output-chunk gap p50/p95/max: 1.362 s / 1.623 s / 1.653 s
+  TTFT new short request:   159.8 s
+  long job: 262,107 tok prefilled in 179.8 s  (1458 tok/s prefill)
+  >>> RED  (requirement: >=25 % of its own undisturbed baseline)
+
+--- repetition 3/3  2026-08-02T04:22:18+02:00 ---
+CONFIG: chunk2048-cold-r3   prefill=256K
+  capability probe: token_ids returned OK
+  warming up (long generation)...
+  reference decode (warm, undisturbed): 38.07 tok/s  (400 tokens in 159 chunks)
+  undisturbed baseline:     37.51 tok/s  (same stream, 24.8 s before submit)
+  prefill window:           178.4 s  (submit -> first output token)
+  decode DURING prefill:    1.90 tok/s  (5.1 % of its own baseline; 339 tokens)
+  [diagnostic] separate warm reference: 38.07 tok/s  (5.0 % of that)
+  output-chunk gap p50/p95/max: 1.336 s / 1.625 s / 1.659 s
+  TTFT new short request:   158.4 s
+  long job: 262,109 tok prefilled in 178.4 s  (1469 tok/s prefill)
+  >>> RED  (requirement: >=25 % of its own undisturbed baseline)
+
+=== arm chunk2048-cold done 2026-08-02T04:26:42+02:00 ===
+
+# --- VERIFICATION RUN, hardened instrument (integrity guards in place) ---
+# Instrument: scripts/prefill_decode_overlap.py with guarded threads, UsageMissing,
+#             timestamp-based admission label, stream-margin reporting.
+# Profile: chunk2048 (production profile, no restart needed). 2026-08-02 ~11:06 CEST.
+# Command: python3 prefill_decode_overlap.py 256000 verify-2048
+
+CONFIG: verify-2048   prefill=256K
+  capability probe: token_ids returned OK
+  warming up (long generation)...
+  reference decode (warm, undisturbed): 36.95 tok/s  (400 tokens in 163 chunks)
+  undisturbed baseline:     37.61 tok/s  (same stream, 24.8 s before submit)
+  prefill window:           180.1 s  (submit -> first output token)
+  decode DURING prefill:    1.93 tok/s  (5.1 % of its own baseline; 348 tokens)
+  [diagnostic] separate warm reference: 36.95 tok/s  (5.2 % of that)
+  output-chunk gap p50/p95/max: 1.333 s / 1.657 s / 1.703 s
+  TTFT new short request:   160.1 s
+  stream margin past window: 31.5 s
+  long job: 262,105 tok prefilled in 180.1 s  (1455 tok/s prefill)
+  >>> RED  (requirement: >=25 % of its own undisturbed baseline)

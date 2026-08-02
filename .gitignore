@@ -7,3 +7,7 @@ fangst/
 captures/
 *-capture.json
 .DS_Store
+
+# Raw measurement logs are evidence and must be committed.
+!results/raw/
+!results/raw/*.log
