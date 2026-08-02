@@ -42,7 +42,7 @@ property, not the model's.
 `total context ÷ unchanged tail`; with ~17–20K tokens in both cases, expect the same order
 of magnitude, **20–40×**.
 
-**H4.** The first divergence lands in block 0 for `dirty-top` and yields **0 % reusable
+**H4.** The first divergence lands in block 0 for `dirty-top` and yields **0% reusable
 cache** on Laguna too, regardless of block size.
 
 ## Falsification criteria
@@ -74,9 +74,9 @@ predicted 20–40× band; top/middle = 1.65 vs the positional model's ~1.3. Both
 are consistent with fixed costs compressing ratios at smaller context (12K vs 19K) —
 exactly the interpretive difficulty §6 of THREATS anticipated.
 
-**H4 — CONFIRMED.** Top mutation: divergence at token 16 → block 0 of 53 → **0.0 %**
+**H4 — CONFIRMED.** Top mutation: divergence at token 16 → block 0 of 53 → **0.0%**
 reusable, 13,543 tokens re-prefilled. Bottom mutation: divergence at token 13,536 →
-block 52 of 53 → **98.3 %** reusable, 231 tokens. The analyzer predicted the mechanism
+block 52 of 53 → **98.3%** reusable, 231 tokens. The analyzer predicted the mechanism
 correctly against a tokenizer it was never calibrated for.
 
 ### Conclusion

@@ -22,8 +22,8 @@ TP communication over RoCE, chunking, block allocation, cache eviction, kernel c
 scheduler overhead. That it matched our measured `middle/top` ratio (0.811 measured vs
 0.75–0.80 predicted) is support, not proof. **One data point.**
 
-> **Settling experiment:** several mutation positions — 10, 25, 50, 75, 90 % — to see
-> whether the whole curve follows `1 − (p/n)²` or merely happens to fit at 50 %.
+> **Settling experiment:** several mutation positions — 10, 25, 50, 75, 90% — to see
+> whether the whole curve follows `1 − (p/n)²` or merely happens to fit at 50%.
 
 ## 3. Prompt locality is measured on vLLM's prefix cache
 
@@ -52,7 +52,7 @@ pattern is **strong replication**; it is not evidence for all inference engines.
 | Second long job in one test hit the prefix cache | Bandwidth sharing between two prefills is **unanswered** |
 | `dirty-bottom` can be affected by the chat template | If the template appends text after the user message, the mutation is no longer last |
 | No soak run | Long-term stability untested; session Xid count: 0 |
-| Recipe claims (Stage C 584-byte envelope, k=3 ≈ −24 %) | Taken from the recipe, **not independently verified** |
+| Recipe claims (Stage C 584-byte envelope, k=3 ≈ −24%) | Taken from the recipe, **not independently verified** |
 
 ## 6. A pre-registration flaw (noted, not rewritten)
 
@@ -70,7 +70,7 @@ Worth separating, so the list above does not read as "everything is uncertain":
 - **Cache invalidation is deterministic.** First divergence, block index and reusable
   fraction follow directly from tokenization and block size.
 - **The three-engine separation is directly measured**, not modeled: prefill aggregate
-  flat over N=1→6, decode +125 %, admission blocked. Same machine, same hour.
+  flat over N=1→6, decode +125%, admission blocked. Same machine, same hour.
 - **`MAX_NUM_BATCHED_TOKENS` → KV pool** is read from the boot log, not derived.
 - **Correctness results** (40/40, 12/12 needles, two solved agent tasks) are counted
   outcomes.

@@ -22,7 +22,7 @@ Notes that save others time:
   Python on a prebuilt base image; no NVCC compilation happens.
 - **"Patch 4"** (shared-expert gate_up_proj) **is already baked into the recipe overlay**
   since 2026-07-31. Do not apply it again — verify the file hash instead. Without it,
-  draft acceptance collapses to ~26 % and decode roughly halves; dropped tensors are
+  draft acceptance collapses to ~26% and decode roughly halves; dropped tensors are
   logged at DEBUG level only.
 
 ## 1. Production status
@@ -35,22 +35,22 @@ Decode, warm, `stream:false`, median of three:
 
 | Content | Decode | Draft acceptance |
 |---|---|---|
-| Code / structured | **62.5–68.1 tok/s** | **71.0 %** |
-| English prose | 35.3 tok/s | 28.4 % |
-| Swedish prose | 30.3 tok/s | 19.5 % |
+| Code / structured | **62.5–68.1 tok/s** | **71.0%** |
+| English prose | 35.3 tok/s | 28.4% |
+| Swedish prose | 30.3 tok/s | 19.5% |
 | Mixed (3 code + 2 prose) | 50.1 tok/s | — |
 
-Code acceptance of 71.0 % exceeds the recipe's own reference (68.7 %), proving the baked-in
-Patch 4 is active. Per-position acceptance: 74.5 / 52.9 / 37.4 / 28.1 / 21.6 %.
+Code acceptance of 71.0% exceeds the recipe's own reference (68.7%), proving the baked-in
+Patch 4 is active. Per-position acceptance: 74.5 / 52.9 / 37.4 / 28.1 / 21.6%.
 
-**Swedish text costs ~9 percentage points of draft acceptance and ~14 % decode versus
+**Swedish text costs ~9 percentage points of draft acceptance and ~14% decode versus
 English**, measured with content-matched prompt pairs. This is a property of the drafter,
 not a configuration error — consistent with
 [Speculative Decoding Across Languages (arXiv:2605.30580)](https://arxiv.org/abs/2605.30580).
 
 ## 2. Context depth
 
-3 needles per depth (at 8 %, 50 %, 92 % of the document), with distractor codes.
+3 needles per depth (at 8%, 50%, 92% of the document), with distractor codes.
 
 | Depth | Prompt tokens | Hits | TTFT | Prefill |
 |---|---|---|---|---|
@@ -73,7 +73,7 @@ configuration, same hour:
 | Engine | Bounded by | Scales with concurrency? |
 |---|---|---|
 | **Prefill** | compute | **No** — aggregate completely flat |
-| **Decode** | memory bandwidth + batching | **Yes** — +125 % to N=6 |
+| **Decode** | memory bandwidth + batching | **Yes** — +125% to N=6 |
 | **Admission** | scheduling | **No** during long prefill |
 
 ### Prefill concurrency (32K per session, end-to-end incl. prefill)
@@ -85,7 +85,7 @@ configuration, same hour:
 | 4 | 1.7 | 6.6 | 77.4 s |
 | 6 | 1.3 | **6.5** | 115.2 s |
 
-Aggregate varies 5 % while per-stream falls by 5.2×. **Pure serialization.** A single 32K
+Aggregate varies 5% while per-stream falls by 5.2×. **Pure serialization.** A single 32K
 prefill saturates the system.
 
 ### Decode concurrency (short unique prompt, 1,200-token generation)
@@ -94,20 +94,20 @@ Swedish-prose content (worst case):
 
 | N | aggregate | per stream | TTFT max | acceptance |
 |---|---|---|---|---|
-| 1 | 15.2 | 15.3 | 0.2 s | 21.5 % |
-| 2 | 22.0 | 11.8 (77 %) | 0.4 s | 18.9 % |
-| 4 | **31.5** | 8.3 (54 %) | 0.4 s | 23.4 % |
-| 6 | 34.2 | 6.4 (42 %) | 1.7 s | 23.2 % |
+| 1 | 15.2 | 15.3 | 0.2 s | 21.5% |
+| 2 | 22.0 | 11.8 (77%) | 0.4 s | 18.9% |
+| 4 | **31.5** | 8.3 (54%) | 0.4 s | 23.4% |
+| 6 | 34.2 | 6.4 (42%) | 1.7 s | 23.2% |
 
 Code content:
 
 | N | aggregate | per stream | acceptance |
 |---|---|---|---|
-| 1 | 48.0 tok/s | 48.0 | 62.3 % |
-| 2 | 72.9 | 38.1 | 72.6 % |
-| 4 | **126.3 tok/s** | 34.0 | **71.3 %** |
+| 1 | 48.0 tok/s | 48.0 | 62.3% |
+| 2 | 72.9 | 38.1 | 72.6% |
+| 4 | **126.3 tok/s** | 34.0 | **71.3%** |
 
-**Saturation around N≈4.** Acceptance holds ~71 % under concurrency — speculation does not
+**Saturation around N≈4.** Acceptance holds ~71% under concurrency — speculation does not
 degrade with parallel streams.
 
 ### Admission during long prefill
@@ -131,18 +131,18 @@ Measured at 256K prefill, `--async-scheduling` off in both cases.
 
 | Metric | 8192 | 2048 |
 |---|---|---|
-| Prefill | 1,529 tok/s | 1,469 tok/s (**−3.9 %**) |
-| p95 token gap during prefill | 5.197 s | **1.590 s** (−69 %) |
+| Prefill | 1,529 tok/s | 1,469 tok/s (**−3.9%**) |
+| p95 token gap during prefill | 5.197 s | **1.590 s** (−69%) |
 | max token gap | 6.417 s | 2.085 s |
-| Decode share during prefill | 7.1 % | 7.3 % (**unchanged**) |
+| Decode share during prefill | 7.1% | 7.3% (**unchanged**) |
 | TTFT of a new short request | 150.7 s | 158.1 s (unchanged) |
-| **KV pool** | 1,598,763 tok | **2,671,557 tok** (+67 %) |
+| **KV pool** | 1,598,763 tok | **2,671,557 tok** (+67%) |
 | Max concurrency @1M | 1.59× | **2.55×** |
 
 **The mechanism is confirmed:** the token gaps *are* the prefill chunks.
 `8192 ÷ 1529 = 5.36 s` vs measured p95 5.20 s. At 2048: `2048 ÷ 1469 = 1.39 s` vs 1.59 s.
 
-**But chunk size is a jitter lever, not a fairness lever.** Decode share is pinned at ~7 %:
+**But chunk size is a jitter lever, not a fairness lever.** Decode share is pinned at ~7%:
 at 8192 decode fits ~9 tokens per chunk, at 2048 ~2.3 — four times more opportunities,
 four times fewer tokens each, net zero. The scheduler gives decode a *fixed share of the
 token budget*, and that share cannot be changed by changing the budget's size.
@@ -151,7 +151,7 @@ vLLM's chunked-prefill design states pending decodes should be prioritized and m
 prefill — this stack deviates from that stated intent. See [`repro/`](../repro/) for a
 minimal reproduction.
 
-**Conclusion:** 2048 buys much better jitter and a 67 % larger KV pool for 4 % prefill.
+**Conclusion:** 2048 buys much better jitter and a 67% larger KV pool for 4% prefill.
 It does not fix fairness or admission. It is still a strong agent profile.
 
 ## 5. Prefix cache locality
@@ -175,8 +175,8 @@ Verified with `prompt_locality.py` against the server's own tokenizer — identi
 ```
 TIMESTAMP AT TOP                  TIMESTAMP AT END
 first divergence: token 13        first divergence: token 16,834
-reusable:  0 (0.0 %)              reusable:  16,640 (98.8 %)
-re-prefill: 16,839 (100 %)        re-prefill: 200 (1.2 %)
+reusable:  0 (0.0%)              reusable:  16,640 (98.8%)
+re-prefill: 16,839 (100%)        re-prefill: 200 (1.2%)
 extra cost: ~11 s/turn            extra cost: ~0.1 s/turn
 ```
 
@@ -205,7 +205,7 @@ and topology (single node vs TP=2):
 
 Form replicated; effect size is stack- and context-size-dependent (fixed costs compress the
 ratios at smaller context). Token-level mechanism verified on Laguna too: top mutation →
-divergence at token 16 → block 0 → 0.0 % reuse; bottom mutation → 98.3 % reuse.
+divergence at token 16 → block 0 → 0.0% reuse; bottom mutation → 98.3% reuse.
 Pre-registered hypotheses, including one honestly failed prediction:
 [`HYPOTHESES-laguna-replication.md`](HYPOTHESES-laguna-replication.md).
 
@@ -243,7 +243,7 @@ deployment**) or a local UMA patch of `gpu_worker.py` to use `MemAvailable`.
 | Ready (generation 1) | +5.1 s |
 | Warm (generation 2) | 3.5 s |
 
-The weight loader is single-threaded (101 % CPU) — the floor for every restart, cache or
+The weight loader is single-threaded (101% CPU) — the floor for every restart, cache or
 not. Readiness should be measured to the first successful generation, not the open port.
 
 ## 7. Conclusions we corrected after better measurement
@@ -280,7 +280,7 @@ Kept because they are as useful as the results.
 - No long soak yet. Xid errors during the session: 0.
 - Quality gain vs the previous model (Artificial Analysis 40 → 50) is the vendor's figure
   at maximum reasoning effort; our production setting (`thinking=false`) is unmeasured.
-- The old production model's admission behavior was never measured — the ~7 % decode share
+- The old production model's admission behavior was never measured — the ~7% decode share
   may be inherited rather than new.
 
 ## 9. Real agent workload (Hermes v0.19.0)
@@ -295,9 +295,9 @@ prompt. A second task (string-conversion bug class) completed correctly in **316
 
 | Transition | Prompt size | First divergence | Reusable prefix | Re-prefill |
 |---|---|---|---|---|
-| turn 1→2 | 15,169 tok | token 15,168 (last) | **97.1 %** | 453 tok |
-| turn 5→6 | 16,549 tok | token 16,548 (last) | **98.7 %** | 213 tok |
-| turn 9→10 | 17,655 tok | token 17,654 (last) | **97.5 %** | 439 tok |
+| turn 1→2 | 15,169 tok | token 15,168 (last) | **97.1%** | 453 tok |
+| turn 5→6 | 16,549 tok | token 16,548 (last) | **98.7%** | 213 tok |
+| turn 9→10 | 17,655 tok | token 17,654 (last) | **97.5%** | 439 tok |
 
 **The agent framework is already cache-optimal.** Prompts are built append-only: no
 mutating timestamps, no reordered tool lists, no rewritten history. Each agent step
