@@ -174,7 +174,7 @@ what happens to decode while a prefill runs. The 2048 profile reproduces across 
 restart, so uptime and cache warmth do not confound the result.
 
 > **These figures replace the originally published 7.1% / 7.3%, which were invalid.**
-> They were taken with the instrument at `e81d9ee`, before four integrity guards were
+> They were taken with the instrument at `ffce6f1`, before four integrity guards were
 > added; see "Provenance caveat" in the correction document. **Both profiles have since
 > been re-verified on the hardened instrument** — 1.5% (8192) and 5.1% (2048), reproducing
 > the 1.7% and 5.0% medians. Raw output for all eleven runs:

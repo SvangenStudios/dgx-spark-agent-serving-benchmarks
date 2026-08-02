@@ -1,5 +1,10 @@
 # Measurement correction — 2026-08-02
 
+> **Note on commit hashes.** The git history was rewritten on 2026-08-02 to correct the
+> commit author identity. Every commit hash changed. Hashes cited in this document and in
+> `raw/ab-256k-2026-08-02.log` refer to the current history; if you fetched the repository
+> before that rewrite, the hashes you saw will not resolve. Contents are unchanged.
+
 A follow-up review of `scripts/prefill_decode_overlap.py` found **three independent faults**
 in how decode share during prefill was measured. The reported values **7.1% and 7.3% are
 invalid** and are being re-measured. A fourth fault, in `scripts/prompt_locality.py`,
@@ -127,7 +132,7 @@ advance. Our own written estimate before measuring was "~8–15%"; the answer wa
 
 ### Provenance caveat
 
-The nine runs were taken with the instrument at commit `e81d9ee`, which did **not** yet
+The nine runs were taken with the instrument at commit `ffce6f1`, which did **not** yet
 have four integrity guards added afterwards:
 
 - exceptions raised inside the worker threads were discarded by `threading.Thread`, so a
