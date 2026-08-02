@@ -39,10 +39,12 @@ jobs:
             exit 1
           fi
 
-      - name: Commit-message scan — AI session identifiers and personal metadata
+      - name: Commit-message scan — AI session identifiers and tooling metadata
         run: |
           # Commit messages are published too, and no file-based scan sees them.
-          if git log --all --format='%B' | grep -nE 'Claude-Session:|claude\.ai/code/session_|chatgpt\.com/(c|share)/' ; then
-            echo '::error::Public AI session identifier found in a commit message'
+          # Session URLs are the privacy problem; the Co-Authored-By trailers are
+          # simply working metadata this repository does not publish.
+          if git log --all --format='%B' | grep -nE 'Claude-Session:|claude\.ai/code/session_|chatgpt\.com/(c|share)/|Co-Authored-By:.*(anthropic|claude)' ; then
+            echo '::error::AI session identifier or tooling trailer found in a commit message'
             exit 1
           fi
