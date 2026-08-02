@@ -286,11 +286,32 @@ instrument.
       (348 tokens, 1,455 tok/s prefill, 180.1 s window, 160.1 s admission delay,
       31.5 s stream margin). Reproduces the 5.0% median from the six earlier runs. No
       worker errors, no missing-usage refusals, no margin warning — every guard passed.
-- [ ] Verification repetition on **8192**. Requires two server restarts and is scheduled
-      for a maintenance window; the production profile stays on 2048 until then.
+- [x] Verification repetition on **8192** with the hardened instrument: **1.5%**
+      (96 tokens, 1,563 tok/s prefill, 167.6 s window, 147.6 s admission delay, 27.5 s
+      stream margin). Reproduces the 1.7% median from the three earlier runs. No worker
+      errors, no missing-usage refusals, no margin warning.
 
-The 2048 figure is confirmed on the hardened instrument. Treat **1.7% for 8192** as
-measured but not yet re-confirmed.
+**Both profiles are now confirmed on the hardened instrument.**
+
+| | headline result | hardened verification |
+|---|---|---|
+| 8192 | **1.7%** median of 3 runs (1.6 / 1.7 / 1.8) | 1.5%, one run |
+| 2048 | **5.0%** median of 6 runs (4.5 – 5.2) | 5.1%, one run |
+| A/B effect | **2.9×**, from the multi-run medians | 3.4×, from the verification pair |
+
+**The headline figure is 2.9×, from the multi-run medians.** The 3.4× from the
+verification pair rests on a single run per profile and is reported as independent support,
+not as the result.
+
+The 8192 verification came in slightly below the original arm — 1.5% and 96 tokens against
+1.6–1.8% and 105–107 — which is a small shift, not a contradiction. What matters is that no
+worker errors were caught, `usage` was present and matched the counted tokens, the ongoing
+stream had 27.5 s of margin past the window, and the value sits far closer to 1.7% than to
+5.0%. The separation between the profiles is undisturbed.
+
+We chose **not** to spend two further server restarts on additional 8192 repetitions. Three
+tightly clustered runs plus one hardened verification is sufficient, provided the provenance
+caveat above stays visible — which is why it is stated rather than retired.
 
 ## Re-measurement protocol
 

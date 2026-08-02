@@ -153,8 +153,9 @@ CONFIG: chunk2048-cold-r3   prefill=256K
 === arm chunk2048-cold done 2026-08-02T04:26:42+02:00 ===
 
 # --- VERIFICATION RUN, hardened instrument (integrity guards in place) ---
-# Instrument: scripts/prefill_decode_overlap.py with guarded threads, UsageMissing,
-#             timestamp-based admission label, stream-margin reporting.
+# Instrument: scripts/prefill_decode_overlap.py as committed in e973a40 (guarded threads,
+#             UsageMissing, timestamp-based admission label, stream-margin reporting).
+#             Run from the working tree minutes before that commit; file content identical.
 # Profile: chunk2048 (production profile, no restart needed). 2026-08-02 ~11:06 CEST.
 # Command: python3 prefill_decode_overlap.py 256000 verify-2048
 
@@ -170,4 +171,25 @@ CONFIG: verify-2048   prefill=256K
   TTFT new short request:   160.1 s
   stream margin past window: 31.5 s
   long job: 262,105 tok prefilled in 180.1 s  (1455 tok/s prefill)
+  >>> RED  (requirement: >=25 % of its own undisturbed baseline)
+
+# --- VERIFICATION RUN, hardened instrument ---
+# Instrument: scripts/prefill_decode_overlap.py at commit e973a40 (fully hardened).
+# Profile: chunk8192. Profile switch 2048->8192: 11:12:37-11:17:25 CEST (4 min 48 s down).
+#          Warmed to 38.0 / 39.7 / 37.2 tok/s before measuring.
+#          Restored to chunk2048 immediately afterwards, from 11:22:43 CEST.
+# Command: python3 prefill_decode_overlap.py 256000 verify-8192
+
+CONFIG: verify-8192   prefill=256K
+  capability probe: token_ids returned OK
+  warming up (long generation)...
+  reference decode (warm, undisturbed): 36.81 tok/s  (400 tokens in 163 chunks)
+  undisturbed baseline:     37.68 tok/s  (same stream, 24.8 s before submit)
+  prefill window:           167.6 s  (submit -> first output token)
+  decode DURING prefill:    0.57 tok/s  (1.5 % of its own baseline; 96 tokens)
+  [diagnostic] separate warm reference: 36.81 tok/s  (1.6 % of that)
+  output-chunk gap p50/p95/max: 4.685 s / 6.110 s / 6.258 s
+  TTFT new short request:   147.6 s
+  stream margin past window: 27.5 s
+  long job: 262,103 tok prefilled in 167.6 s  (1563 tok/s prefill)
   >>> RED  (requirement: >=25 % of its own undisturbed baseline)

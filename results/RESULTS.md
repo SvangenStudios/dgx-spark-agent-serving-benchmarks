@@ -175,9 +175,9 @@ restart, so uptime and cache warmth do not confound the result.
 
 > **These figures replace the originally published 7.1% / 7.3%, which were invalid.**
 > They were taken with the instrument at `e81d9ee`, before four integrity guards were
-> added; see "Provenance caveat" in the correction document. A verification run on the
-> hardened instrument reproduces the 2048 figure (**5.1%** against a 5.0% median); the
-> 8192 verification awaits a maintenance window. Raw output for all ten runs:
+> added; see "Provenance caveat" in the correction document. **Both profiles have since
+> been re-verified on the hardened instrument** — 1.5% (8192) and 5.1% (2048), reproducing
+> the 1.7% and 5.0% medians. Raw output for all eleven runs:
 > [`raw/ab-256k-2026-08-02.log`](raw/ab-256k-2026-08-02.log). See
 > [`CORRECTION-2026-08-02.md`](CORRECTION-2026-08-02.md). The KV-pool figure was re-read
 > from the restarted server's own startup accounting (2,669,829 vs 2,671,557 published,

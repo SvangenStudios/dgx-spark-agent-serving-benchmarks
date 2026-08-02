@@ -47,6 +47,19 @@ against the server's `usage.completion_tokens`.
 | Prefill cost of 2048 | −3.9% | **−7.7%** (1,462 vs 1,584 tok/s) |
 | p95 output-chunk gap, 8192 → 2048 | 5.20 → 1.59 s | 6.10 → 1.64 s |
 
+The original three-run 8192 arm measured 1.6–1.8% decode share, with a 1.7% median. A
+subsequent verification run using the fully hardened instrument measured 1.5%, with all
+integrity guards passing. The six-run 2048 median is 5.0%, independently verified at 5.1%.
+The multi-run A/B therefore remains **2.9×**, while the hardened verification pair measured
+3.4×. Raw output for all eleven runs is committed in the repository.
+
+**If you run this stack for agent workloads, this is the actionable part:**
+`--max-num-batched-tokens` is a fairness lever, and 8192 — the value I originally
+recommended in this thread, and a common default in recipes built on this runtime — costs
+roughly 3× the decode throughput of 2048 while a long prefill is running. In absolute terms
+that is ~0.6 tok/s against ~1.9 tok/s for whatever else is mid-generation. Both are bad;
+the difference between them is not.
+
 **The conclusion that does not survive.** I published that decode share is invariant to
 chunk size, and concluded "chunk size is a jitter lever, not a fairness lever". That is
 wrong. **2048 delivers 2.9× the decode share and 3.1× the decode tokens** of 8192 during the
